@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:sports_c/user/search/location.dart';
+
+/// ------------------- APP COLORS -------------------
+const Color appPrimaryColor = Color(0xFF1994DD);
+const Color appSecondaryColor = Color(0xFF22C493);
 
 /// ------------------- MODEL -------------------
 class PlayerFilter {
@@ -61,6 +66,13 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
 }
 
 /// ------------------- MAIN CONTAINER -------------------
+void main() {
+  runApp(const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: SearchPage(),
+  ));
+}
+
 class SearchPage extends StatelessWidget {
   const SearchPage({super.key});
 
@@ -69,7 +81,12 @@ class SearchPage extends StatelessWidget {
     return BlocProvider(
       create: (_) => SearchBloc(),
       child: Scaffold(
-        appBar: AppBar(title: const Text('Search Players')),
+        backgroundColor: Colors.grey.shade100,
+        appBar: AppBar(
+          title: const Text('Search Players'),
+          centerTitle: true,
+          backgroundColor: appPrimaryColor,
+        ),
         body: const SafeArea(child: MainSearchContainer()),
       ),
     );
@@ -86,8 +103,16 @@ class MainSearchContainer extends StatefulWidget {
 
 class _MainSearchContainerState extends State<MainSearchContainer> {
   final List<String> sports = [
-    'Football', 'Cricket', 'Basketball', 'Volleyball',
-    'Hockey', 'Badminton', 'Tennis', 'Athletics', 'Boxing', 'Wrestling'
+    'Football',
+    'Cricket',
+    'Basketball',
+    'Volleyball',
+    'Hockey',
+    'Badminton',
+    'Tennis',
+    'Athletics',
+    'Boxing',
+    'Wrestling'
   ];
   final List<String> skillLevels = ['Beginner', 'Intermediate', 'Advanced'];
 
@@ -102,7 +127,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
   String locationInput = '';
   String searchText = '';
 
-  void _openFilterSheet({required String enteredText}) async {
+  void _openFilterDialog({required String enteredText}) async {
     searchText = enteredText;
 
     final lowerText = enteredText.toLowerCase();
@@ -133,17 +158,12 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
       maxWeight = (weight + 10).clamp(0, 300);
     }
 
-    await showModalBottomSheet(
+    await showDialog(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-      ),
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-          left: 16, right: 16, top: 16,
-        ),
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: FilterForm(
           sports: sports,
           skillLevels: skillLevels,
@@ -178,7 +198,8 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
               prefixIcon: const Icon(Icons.search),
               hintText: 'Search players (e.g. Cricket 16yo 170cm)',
               filled: true,
-              fillColor: Colors.grey.shade100,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(30),
                 borderSide: BorderSide.none,
@@ -186,7 +207,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
             ),
             onSubmitted: (text) {
               if (text.isNotEmpty) {
-                _openFilterSheet(enteredText: text);
+                _openFilterDialog(enteredText: text);
               }
             },
           ),
@@ -206,9 +227,12 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(15),
                       ),
-                      elevation: 2,
+                      elevation: 3,
                       child: ListTile(
-                        leading: const CircleAvatar(child: Icon(Icons.person)),
+                        leading: CircleAvatar(
+                          backgroundColor: appPrimaryColor,
+                          child: const Icon(Icons.person, color: Colors.white),
+                        ),
                         title: Text(state.results[index]),
                         subtitle: const Text('Skill • Age • Height'),
                         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
@@ -219,7 +243,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
               } else {
                 return const Center(
                   child: Text(
-                    'Use the search bar or mic icon to filter players.',
+                    'Use the search bar to filter players.',
                     style: TextStyle(fontSize: 16, color: Colors.grey),
                     textAlign: TextAlign.center,
                   ),
@@ -234,7 +258,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
 }
 
 /// ------------------- FILTER FORM WIDGET -------------------
-class FilterForm extends StatelessWidget {
+class FilterForm extends StatefulWidget {
   final List<String> sports;
   final List<String> skillLevels;
   final String selectedSport;
@@ -262,89 +286,167 @@ class FilterForm extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final sportCtrl = ValueNotifier(selectedSport);
-    final skillCtrl = ValueNotifier(selectedSkillLevel);
-    final locationCtrl = TextEditingController(text: locationInput);
-    final minAgeCtrl = TextEditingController(text: minAge.toStringAsFixed(0));
-    final maxAgeCtrl = TextEditingController(text: maxAge.toStringAsFixed(0));
-    final minHeightCtrl = TextEditingController(text: minHeight.toStringAsFixed(0));
-    final maxHeightCtrl = TextEditingController(text: maxHeight.toStringAsFixed(0));
-    final minWeightCtrl = TextEditingController(text: minWeight.toStringAsFixed(0));
-    final maxWeightCtrl = TextEditingController(text: maxWeight.toStringAsFixed(0));
+  State<FilterForm> createState() => _FilterFormState();
+}
 
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          DropdownButtonFormField<String>(
-            value: selectedSport,
-            items: sports.map((sport) => DropdownMenuItem(
-              value: sport, child: Text(sport),
-            )).toList(),
-            onChanged: (value) => sportCtrl.value = value!,
-            decoration: const InputDecoration(labelText: 'Sport'),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: TextField(controller: minAgeCtrl, decoration: const InputDecoration(labelText: 'Min Age'), keyboardType: TextInputType.number)),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: maxAgeCtrl, decoration: const InputDecoration(labelText: 'Max Age'), keyboardType: TextInputType.number)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: TextField(controller: minHeightCtrl, decoration: const InputDecoration(labelText: 'Min Height (cm)'), keyboardType: TextInputType.number)),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: maxHeightCtrl, decoration: const InputDecoration(labelText: 'Max Height (cm)'), keyboardType: TextInputType.number)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: TextField(controller: minWeightCtrl, decoration: const InputDecoration(labelText: 'Min Weight (kg)'), keyboardType: TextInputType.number)),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: maxWeightCtrl, decoration: const InputDecoration(labelText: 'Max Weight (kg)'), keyboardType: TextInputType.number)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: selectedSkillLevel,
-            items: skillLevels.map((level) => DropdownMenuItem(
-              value: level, child: Text(level),
-            )).toList(),
-            onChanged: (value) => skillCtrl.value = value!,
-            decoration: const InputDecoration(labelText: 'Skill Level'),
-          ),
-          const SizedBox(height: 12),
-          TextField(controller: locationCtrl, decoration: const InputDecoration(labelText: 'Location')),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: () {
-              final filter = PlayerFilter(
-                sport: sportCtrl.value,
-                minAge: double.tryParse(minAgeCtrl.text) ?? 10,
-                maxAge: double.tryParse(maxAgeCtrl.text) ?? 25,
-                minHeight: double.tryParse(minHeightCtrl.text) ?? 140,
-                maxHeight: double.tryParse(maxHeightCtrl.text) ?? 200,
-                minWeight: double.tryParse(minWeightCtrl.text) ?? 40,
-                maxWeight: double.tryParse(maxWeightCtrl.text) ?? 100,
-                location: locationCtrl.text,
-                skillLevel: skillCtrl.value,
-                searchText: searchText,
-              );
-              onApply(filter);
-            },
-            icon: const Icon(Icons.check),
-            label: const Text('Apply Filters'),
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+class _FilterFormState extends State<FilterForm> {
+  late String sport;
+  late String skillLevel;
+  late TextEditingController locationCtrl;
+  late TextEditingController minAgeCtrl;
+  late TextEditingController maxAgeCtrl;
+  late TextEditingController minHeightCtrl;
+  late TextEditingController maxHeightCtrl;
+  late TextEditingController minWeightCtrl;
+  late TextEditingController maxWeightCtrl;
+
+  InputDecoration _inputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      filled: true,
+      fillColor: Colors.grey.shade100,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    sport = widget.selectedSport;
+    skillLevel = widget.selectedSkillLevel;
+    locationCtrl = TextEditingController(text: widget.locationInput);
+    minAgeCtrl = TextEditingController(text: widget.minAge.toStringAsFixed(0));
+    maxAgeCtrl = TextEditingController(text: widget.maxAge.toStringAsFixed(0));
+    minHeightCtrl = TextEditingController(text: widget.minHeight.toStringAsFixed(0));
+    maxHeightCtrl = TextEditingController(text: widget.maxHeight.toStringAsFixed(0));
+    minWeightCtrl = TextEditingController(text: widget.minWeight.toStringAsFixed(0));
+    maxWeightCtrl = TextEditingController(text: widget.maxWeight.toStringAsFixed(0));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.all(Radius.circular(20)),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            Text(
+              'Filter Players',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: appPrimaryColor),
             ),
-          ),
-          const SizedBox(height: 20),
-        ],
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: sport,
+              items: widget.sports.map((sport) => DropdownMenuItem(
+                value: sport,
+                child: Text(sport),
+              )).toList(),
+              onChanged: (value) => setState(() => sport = value!),
+              decoration: _inputDecoration('Sport'),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: TextField(controller: minAgeCtrl, decoration: _inputDecoration('Min Age'), keyboardType: TextInputType.number)),
+                const SizedBox(width: 10),
+                Expanded(child: TextField(controller: maxAgeCtrl, decoration: _inputDecoration('Max Age'), keyboardType: TextInputType.number)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: TextField(controller: minHeightCtrl, decoration: _inputDecoration('Min Height (cm)'), keyboardType: TextInputType.number)),
+                const SizedBox(width: 10),
+                Expanded(child: TextField(controller: maxHeightCtrl, decoration: _inputDecoration('Max Height (cm)'), keyboardType: TextInputType.number)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: TextField(controller: minWeightCtrl, decoration: _inputDecoration('Min Weight (kg)'), keyboardType: TextInputType.number)),
+                const SizedBox(width: 10),
+                Expanded(child: TextField(controller: maxWeightCtrl, decoration: _inputDecoration('Max Weight (kg)'), keyboardType: TextInputType.number)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: skillLevel,
+              items: widget.skillLevels.map((level) => DropdownMenuItem(
+                value: level,
+                child: Text(level),
+              )).toList(),
+              onChanged: (value) => setState(() => skillLevel = value!),
+              decoration: _inputDecoration('Skill Level'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: locationCtrl,
+              readOnly: true,
+              decoration: _inputDecoration('Location').copyWith(
+                suffixIcon: Icon(Icons.location_on, color: appSecondaryColor),
+              ),
+              onTap: () async {
+                final pickedAddress = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const MapPickerPage()),
+                );
+                if (pickedAddress != null) {
+                  setState(() {
+                    locationCtrl.text = pickedAddress;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  gradient: const LinearGradient(
+                    colors: [appPrimaryColor, appSecondaryColor],
+                  ),
+                ),
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                  ),
+                  onPressed: () {
+                    final filter = PlayerFilter(
+                      sport: sport,
+                      minAge: double.tryParse(minAgeCtrl.text) ?? 10,
+                      maxAge: double.tryParse(maxAgeCtrl.text) ?? 25,
+                      minHeight: double.tryParse(minHeightCtrl.text) ?? 140,
+                      maxHeight: double.tryParse(maxHeightCtrl.text) ?? 200,
+                      minWeight: double.tryParse(minWeightCtrl.text) ?? 40,
+                      maxWeight: double.tryParse(maxWeightCtrl.text) ?? 100,
+                      location: locationCtrl.text,
+                      skillLevel: skillLevel,
+                      searchText: widget.searchText,
+                    );
+                    widget.onApply(filter);
+                  },
+                  icon: const Icon(Icons.check, color: Colors.white),
+                  label: const Text('Apply Filters', style: TextStyle(color: Colors.white)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+          ],
+        ),
       ),
     );
   }
