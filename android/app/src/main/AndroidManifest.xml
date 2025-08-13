@@ -29,10 +29,10 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
-        <!-- Google Maps API Key (Optional) -->
+        <!-- Google Maps API Key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="YOUR_API_KEY_HERE" />
+            android:value="AIzaSyAS30iPsbnEuwVMRiJMoqu_gfVROqvUabw" />
 
         <!-- FileProvider config for image picker / cropper -->
         <provider

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:sports_c/user/search/location.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 /// ------------------- APP COLORS -------------------
 const Color appPrimaryColor = Color(0xFF1994DD);
@@ -18,6 +20,7 @@ class PlayerFilter {
   final String location;
   final String skillLevel;
   final String searchText;
+  final LatLng? locationCoordinates;
 
   PlayerFilter({
     required this.sport,
@@ -30,6 +33,7 @@ class PlayerFilter {
     required this.location,
     required this.skillLevel,
     required this.searchText,
+    this.locationCoordinates,
   });
 }
 
@@ -65,7 +69,203 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
   }
 }
 
-/// ------------------- MAIN CONTAINER -------------------
+/// ------------------- LOCATION PICKER SCREEN -------------------
+class LocationPickerScreen extends StatefulWidget {
+  const LocationPickerScreen({super.key});
+
+  @override
+  State<LocationPickerScreen> createState() => _LocationPickerScreenState();
+}
+
+class _LocationPickerScreenState extends State<LocationPickerScreen> {
+  static const LatLng tirunelveliCoords = LatLng(8.7139, 77.7567);
+  static const double defaultZoom = 12.0;
+
+  GoogleMapController? _mapController;
+  LatLng? _pickedLocation;
+  String _pickedAddress = "Tirunelveli, Tamil Nadu";
+  Set<Marker> _markers = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _pickedLocation = tirunelveliCoords;
+    _determinePosition();
+  }
+
+  void _setToDefaultLocation() {
+    setState(() {
+      _pickedLocation = tirunelveliCoords;
+      _pickedAddress = "Tirunelveli, Tamil Nadu";
+      _loading = false;
+      _markers = {
+        Marker(
+          markerId: const MarkerId('default_location'),
+          position: tirunelveliCoords,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        )
+      };
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(tirunelveliCoords, defaultZoom),
+      );
+    });
+  }
+
+  Future<void> _determinePosition() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _setToDefaultLocation();
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          _setToDefaultLocation();
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        _setToDefaultLocation();
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      setState(() {
+        _pickedLocation = LatLng(position.latitude, position.longitude);
+        _loading = false;
+      });
+
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(_pickedLocation!, defaultZoom),
+      );
+      _updateAddressFromLatLng(_pickedLocation!);
+    } catch (e) {
+      _setToDefaultLocation();
+    }
+  }
+
+  Future<void> _updateAddressFromLatLng(LatLng position) async {
+    try {
+      if (position == tirunelveliCoords) {
+        setState(() => _pickedAddress = "Tirunelveli, Tamil Nadu");
+        return;
+      }
+
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+        setState(() {
+          _pickedAddress = [
+            place.street,
+            place.locality ?? 'Tirunelveli',
+            place.administrativeArea ?? 'Tamil Nadu'
+          ].where((part) => part != null && part.isNotEmpty).join(", ");
+        });
+      }
+    } catch (e) {
+      setState(() => _pickedAddress = "Tirunelveli, Tamil Nadu");
+    }
+  }
+
+  void _onMapTapped(LatLng position) {
+    setState(() {
+      _pickedLocation = position;
+      _markers = {
+        Marker(
+          markerId: const MarkerId('selected_location'),
+          position: position,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        )
+      };
+    });
+    _updateAddressFromLatLng(position);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Select Location"),
+        backgroundColor: appPrimaryColor,
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
+        children: [
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _pickedLocation ?? tirunelveliCoords,
+              zoom: defaultZoom,
+            ),
+            onMapCreated: (controller) => _mapController = controller,
+            onTap: _onMapTapped,
+            markers: _markers,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+          ),
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                  )
+                ],
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    _pickedAddress,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _pickedLocation == null
+                        ? null
+                        : () {
+                      Navigator.pop(context, {
+                        'location': _pickedLocation,
+                        'address': _pickedAddress,
+                      });
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: appPrimaryColor,
+                    ),
+                    child: const Text("Confirm Location"),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// ------------------- MAIN APP -------------------
 void main() {
   runApp(const MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -124,7 +324,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
   double minWeight = 40;
   double maxWeight = 100;
   String selectedSkillLevel = 'Beginner';
-  String locationInput = '';
+  String locationInput = 'Tirunelveli, Tamil Nadu';
   String searchText = '';
 
   void _openFilterDialog({required String enteredText}) async {
@@ -144,18 +344,18 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
 
     if (ageMatch != null) {
       double age = double.tryParse(ageMatch.group(1)!) ?? 10;
-      minAge = (age - 2).clamp(0, 100);
-      maxAge = (age + 2).clamp(0, 100);
+      minAge = (age - 2).clamp(5, 100);
+      maxAge = (age + 2).clamp(5, 100);
     }
     if (heightMatch != null) {
       double height = double.tryParse(heightMatch.group(1)!) ?? 150;
-      minHeight = (height - 10).clamp(0, 300);
-      maxHeight = (height + 10).clamp(0, 300);
+      minHeight = (height - 10).clamp(100, 250);
+      maxHeight = (height + 10).clamp(100, 250);
     }
     if (weightMatch != null) {
       double weight = double.tryParse(weightMatch.group(1)!) ?? 60;
-      minWeight = (weight - 10).clamp(0, 300);
-      maxWeight = (weight + 10).clamp(0, 300);
+      minWeight = (weight - 10).clamp(30, 200);
+      maxWeight = (weight + 10).clamp(30, 200);
     }
 
     await showDialog(
@@ -299,6 +499,9 @@ class _FilterFormState extends State<FilterForm> {
   late TextEditingController maxHeightCtrl;
   late TextEditingController minWeightCtrl;
   late TextEditingController maxWeightCtrl;
+  LatLng? _selectedLocation;
+
+  final _formKey = GlobalKey<FormState>();
 
   InputDecoration _inputDecoration(String label) {
     return InputDecoration(
@@ -313,6 +516,39 @@ class _FilterFormState extends State<FilterForm> {
     );
   }
 
+  String? _validateAge(String? value) {
+    if (value == null || value.isEmpty) return 'Please enter age';
+    final num = double.tryParse(value);
+    if (num == null) return 'Enter valid number';
+    if (num < 5 || num > 100) return 'Age must be 5-100';
+    return null;
+  }
+
+  String? _validateHeight(String? value) {
+    if (value == null || value.isEmpty) return 'Please enter height';
+    final num = double.tryParse(value);
+    if (num == null) return 'Enter valid number';
+    if (num < 100 || num > 250) return 'Height must be 100-250 cm';
+    return null;
+  }
+
+  String? _validateWeight(String? value) {
+    if (value == null || value.isEmpty) return 'Please enter weight';
+    final num = double.tryParse(value);
+    if (num == null) return 'Enter valid number';
+    if (num < 30 || num > 200) return 'Weight must be 30-200 kg';
+    return null;
+  }
+
+  String? _validateRange(String? minValue, String? maxValue, String fieldName) {
+    final min = double.tryParse(minValue ?? '');
+    final max = double.tryParse(maxValue ?? '');
+    if (min != null && max != null && min > max) {
+      return 'Max $fieldName must be ≥ min';
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -325,6 +561,7 @@ class _FilterFormState extends State<FilterForm> {
     maxHeightCtrl = TextEditingController(text: widget.maxHeight.toStringAsFixed(0));
     minWeightCtrl = TextEditingController(text: widget.minWeight.toStringAsFixed(0));
     maxWeightCtrl = TextEditingController(text: widget.maxWeight.toStringAsFixed(0));
+    _selectedLocation = null;
   }
 
   @override
@@ -335,117 +572,191 @@ class _FilterFormState extends State<FilterForm> {
         borderRadius: BorderRadius.all(Radius.circular(20)),
       ),
       child: SingleChildScrollView(
-        child: Column(
-          children: [
-            Text(
-              'Filter Players',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: appPrimaryColor),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: sport,
-              items: widget.sports.map((sport) => DropdownMenuItem(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              Text(
+                'Filter Players',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: appPrimaryColor,
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
                 value: sport,
-                child: Text(sport),
-              )).toList(),
-              onChanged: (value) => setState(() => sport = value!),
-              decoration: _inputDecoration('Sport'),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: TextField(controller: minAgeCtrl, decoration: _inputDecoration('Min Age'), keyboardType: TextInputType.number)),
-                const SizedBox(width: 10),
-                Expanded(child: TextField(controller: maxAgeCtrl, decoration: _inputDecoration('Max Age'), keyboardType: TextInputType.number)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: TextField(controller: minHeightCtrl, decoration: _inputDecoration('Min Height (cm)'), keyboardType: TextInputType.number)),
-                const SizedBox(width: 10),
-                Expanded(child: TextField(controller: maxHeightCtrl, decoration: _inputDecoration('Max Height (cm)'), keyboardType: TextInputType.number)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: TextField(controller: minWeightCtrl, decoration: _inputDecoration('Min Weight (kg)'), keyboardType: TextInputType.number)),
-                const SizedBox(width: 10),
-                Expanded(child: TextField(controller: maxWeightCtrl, decoration: _inputDecoration('Max Weight (kg)'), keyboardType: TextInputType.number)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: skillLevel,
-              items: widget.skillLevels.map((level) => DropdownMenuItem(
-                value: level,
-                child: Text(level),
-              )).toList(),
-              onChanged: (value) => setState(() => skillLevel = value!),
-              decoration: _inputDecoration('Skill Level'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: locationCtrl,
-              readOnly: true,
-              decoration: _inputDecoration('Location').copyWith(
-                suffixIcon: Icon(Icons.location_on, color: appSecondaryColor),
+                items: widget.sports.map((sport) => DropdownMenuItem(
+                  value: sport,
+                  child: Text(sport),
+                )).toList(),
+                onChanged: (value) => setState(() => sport = value!),
+                decoration: _inputDecoration('Sport'),
               ),
-              onTap: () async {
-                final pickedAddress = await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const MapPickerPage()),
-                );
-                if (pickedAddress != null) {
-                  setState(() {
-                    locationCtrl.text = pickedAddress;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  gradient: const LinearGradient(
-                    colors: [appPrimaryColor, appSecondaryColor],
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: minAgeCtrl,
+                      decoration: _inputDecoration('Min Age'),
+                      keyboardType: TextInputType.number,
+                      validator: _validateAge,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: maxAgeCtrl,
+                      decoration: _inputDecoration('Max Age'),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        final ageValidation = _validateAge(value);
+                        if (ageValidation != null) return ageValidation;
+                        return _validateRange(minAgeCtrl.text, value, 'age');
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: minHeightCtrl,
+                      decoration: _inputDecoration('Min Height (cm)'),
+                      keyboardType: TextInputType.number,
+                      validator: _validateHeight,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: maxHeightCtrl,
+                      decoration: _inputDecoration('Max Height (cm)'),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        final heightValidation = _validateHeight(value);
+                        if (heightValidation != null) return heightValidation;
+                        return _validateRange(minHeightCtrl.text, value, 'height');
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: minWeightCtrl,
+                      decoration: _inputDecoration('Min Weight (kg)'),
+                      keyboardType: TextInputType.number,
+                      validator: _validateWeight,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: maxWeightCtrl,
+                      decoration: _inputDecoration('Max Weight (kg)'),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        final weightValidation = _validateWeight(value);
+                        if (weightValidation != null) return weightValidation;
+                        return _validateRange(minWeightCtrl.text, value, 'weight');
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: skillLevel,
+                items: widget.skillLevels.map((level) => DropdownMenuItem(
+                  value: level,
+                  child: Text(level),
+                )).toList(),
+                onChanged: (value) => setState(() => skillLevel = value!),
+                decoration: _inputDecoration('Skill Level'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: locationCtrl,
+                readOnly: true,
+                decoration: _inputDecoration('Location').copyWith(
+                  suffixIcon: Icon(Icons.location_on, color: appSecondaryColor),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please select a location';
+                  }
+                  return null;
+                },
+                onTap: () async {
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const LocationPickerScreen(),
+                    ),
+                  );
+
+                  if (result != null) {
+                    setState(() {
+                      locationCtrl.text = result['address'];
+                      _selectedLocation = result['location'];
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    gradient: const LinearGradient(
+                      colors: [appPrimaryColor, appSecondaryColor],
+                    ),
+                  ),
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                    ),
+                    onPressed: () {
+                      if (_formKey.currentState!.validate()) {
+                        final filter = PlayerFilter(
+                          sport: sport,
+                          minAge: double.parse(minAgeCtrl.text),
+                          maxAge: double.parse(maxAgeCtrl.text),
+                          minHeight: double.parse(minHeightCtrl.text),
+                          maxHeight: double.parse(maxHeightCtrl.text),
+                          minWeight: double.parse(minWeightCtrl.text),
+                          maxWeight: double.parse(maxWeightCtrl.text),
+                          location: locationCtrl.text,
+                          skillLevel: skillLevel,
+                          searchText: widget.searchText,
+                          locationCoordinates: _selectedLocation,
+                        );
+                        widget.onApply(filter);
+                      }
+                    },
+                    icon: const Icon(Icons.check, color: Colors.white),
+                    label: const Text('Apply Filters', style: TextStyle(color: Colors.white)),
                   ),
                 ),
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    shadowColor: Colors.transparent,
-                  ),
-                  onPressed: () {
-                    final filter = PlayerFilter(
-                      sport: sport,
-                      minAge: double.tryParse(minAgeCtrl.text) ?? 10,
-                      maxAge: double.tryParse(maxAgeCtrl.text) ?? 25,
-                      minHeight: double.tryParse(minHeightCtrl.text) ?? 140,
-                      maxHeight: double.tryParse(maxHeightCtrl.text) ?? 200,
-                      minWeight: double.tryParse(minWeightCtrl.text) ?? 40,
-                      maxWeight: double.tryParse(maxWeightCtrl.text) ?? 100,
-                      location: locationCtrl.text,
-                      skillLevel: skillLevel,
-                      searchText: widget.searchText,
-                    );
-                    widget.onApply(filter);
-                  },
-                  icon: const Icon(Icons.check, color: Colors.white),
-                  label: const Text('Apply Filters', style: TextStyle(color: Colors.white)),
-                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-            ),
-          ],
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+              ),
+            ],
+          ),
         ),
       ),
     );
