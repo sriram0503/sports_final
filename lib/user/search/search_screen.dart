@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
+import 'package:sports_c/user/search/location.dart';
 
-/// ------------------- APP COLORS -------------------
 const Color appPrimaryColor = Color(0xFF1994DD);
 const Color appSecondaryColor = Color(0xFF22C493);
 
-/// ------------------- MODEL -------------------
+class LatLng {
+  final double latitude;
+  final double longitude;
+
+  const LatLng(this.latitude, this.longitude);
+}
+
 class PlayerFilter {
   final String sport;
   final double minAge;
@@ -37,7 +40,6 @@ class PlayerFilter {
   });
 }
 
-/// ------------------- BLOC -------------------
 abstract class SearchEvent {}
 
 class ApplyFilter extends SearchEvent {
@@ -69,210 +71,6 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
   }
 }
 
-/// ------------------- LOCATION PICKER SCREEN -------------------
-class LocationPickerScreen extends StatefulWidget {
-  const LocationPickerScreen({super.key});
-
-  @override
-  State<LocationPickerScreen> createState() => _LocationPickerScreenState();
-}
-
-class _LocationPickerScreenState extends State<LocationPickerScreen> {
-  static const LatLng tirunelveliCoords = LatLng(8.7139, 77.7567);
-  static const double defaultZoom = 12.0;
-
-  GoogleMapController? _mapController;
-  LatLng? _pickedLocation;
-  String _pickedAddress = "Tirunelveli, Tamil Nadu";
-  Set<Marker> _markers = {};
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _pickedLocation = tirunelveliCoords;
-    _determinePosition();
-  }
-
-  void _setToDefaultLocation() {
-    setState(() {
-      _pickedLocation = tirunelveliCoords;
-      _pickedAddress = "Tirunelveli, Tamil Nadu";
-      _loading = false;
-      _markers = {
-        Marker(
-          markerId: const MarkerId('default_location'),
-          position: tirunelveliCoords,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        )
-      };
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLngZoom(tirunelveliCoords, defaultZoom),
-      );
-    });
-  }
-
-  Future<void> _determinePosition() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _setToDefaultLocation();
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          _setToDefaultLocation();
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        _setToDefaultLocation();
-        return;
-      }
-
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      setState(() {
-        _pickedLocation = LatLng(position.latitude, position.longitude);
-        _loading = false;
-      });
-
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLngZoom(_pickedLocation!, defaultZoom),
-      );
-      _updateAddressFromLatLng(_pickedLocation!);
-    } catch (e) {
-      _setToDefaultLocation();
-    }
-  }
-
-  Future<void> _updateAddressFromLatLng(LatLng position) async {
-    try {
-      if (position == tirunelveliCoords) {
-        setState(() => _pickedAddress = "Tirunelveli, Tamil Nadu");
-        return;
-      }
-
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
-      if (placemarks.isNotEmpty) {
-        final place = placemarks.first;
-        setState(() {
-          _pickedAddress = [
-            place.street,
-            place.locality ?? 'Tirunelveli',
-            place.administrativeArea ?? 'Tamil Nadu'
-          ].where((part) => part != null && part.isNotEmpty).join(", ");
-        });
-      }
-    } catch (e) {
-      setState(() => _pickedAddress = "Tirunelveli, Tamil Nadu");
-    }
-  }
-
-  void _onMapTapped(LatLng position) {
-    setState(() {
-      _pickedLocation = position;
-      _markers = {
-        Marker(
-          markerId: const MarkerId('selected_location'),
-          position: position,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        )
-      };
-    });
-    _updateAddressFromLatLng(position);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Select Location"),
-        backgroundColor: appPrimaryColor,
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-        children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: _pickedLocation ?? tirunelveliCoords,
-              zoom: defaultZoom,
-            ),
-            onMapCreated: (controller) => _mapController = controller,
-            onTap: _onMapTapped,
-            markers: _markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-          ),
-          Positioned(
-            bottom: 20,
-            left: 20,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
-                    blurRadius: 8,
-                  )
-                ],
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    _pickedAddress,
-                    style: const TextStyle(fontSize: 16),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _pickedLocation == null
-                        ? null
-                        : () {
-                      Navigator.pop(context, {
-                        'location': _pickedLocation,
-                        'address': _pickedAddress,
-                      });
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: appPrimaryColor,
-                    ),
-                    child: const Text("Confirm Location"),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// ------------------- MAIN APP -------------------
-void main() {
-  runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: SearchPage(),
-  ));
-}
-
 class SearchPage extends StatelessWidget {
   const SearchPage({super.key});
 
@@ -293,7 +91,6 @@ class SearchPage extends StatelessWidget {
   }
 }
 
-/// ------------------- MAIN SEARCH CONTAINER -------------------
 class MainSearchContainer extends StatefulWidget {
   const MainSearchContainer({super.key});
 
@@ -457,7 +254,6 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
   }
 }
 
-/// ------------------- FILTER FORM WIDGET -------------------
 class FilterForm extends StatefulWidget {
   final List<String> sports;
   final List<String> skillLevels;
@@ -503,6 +299,21 @@ class _FilterFormState extends State<FilterForm> {
 
   final _formKey = GlobalKey<FormState>();
 
+  @override
+  void initState() {
+    super.initState();
+    sport = widget.selectedSport;
+    skillLevel = widget.selectedSkillLevel;
+    locationCtrl = TextEditingController(text: widget.locationInput);
+    minAgeCtrl = TextEditingController(text: widget.minAge.toStringAsFixed(0));
+    maxAgeCtrl = TextEditingController(text: widget.maxAge.toStringAsFixed(0));
+    minHeightCtrl = TextEditingController(text: widget.minHeight.toStringAsFixed(0));
+    maxHeightCtrl = TextEditingController(text: widget.maxHeight.toStringAsFixed(0));
+    minWeightCtrl = TextEditingController(text: widget.minWeight.toStringAsFixed(0));
+    maxWeightCtrl = TextEditingController(text: widget.maxWeight.toStringAsFixed(0));
+    _selectedLocation = null;
+  }
+
   InputDecoration _inputDecoration(String label) {
     return InputDecoration(
       labelText: label,
@@ -547,21 +358,6 @@ class _FilterFormState extends State<FilterForm> {
       return 'Max $fieldName must be ≥ min';
     }
     return null;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    sport = widget.selectedSport;
-    skillLevel = widget.selectedSkillLevel;
-    locationCtrl = TextEditingController(text: widget.locationInput);
-    minAgeCtrl = TextEditingController(text: widget.minAge.toStringAsFixed(0));
-    maxAgeCtrl = TextEditingController(text: widget.maxAge.toStringAsFixed(0));
-    minHeightCtrl = TextEditingController(text: widget.minHeight.toStringAsFixed(0));
-    maxHeightCtrl = TextEditingController(text: widget.maxHeight.toStringAsFixed(0));
-    minWeightCtrl = TextEditingController(text: widget.minWeight.toStringAsFixed(0));
-    maxWeightCtrl = TextEditingController(text: widget.maxWeight.toStringAsFixed(0));
-    _selectedLocation = null;
   }
 
   @override
