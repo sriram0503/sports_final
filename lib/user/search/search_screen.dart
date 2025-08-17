@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:sports_c/user/search/location.dart';
-import 'package:sports_c/user/profile/other_user.dart';
-import 'package:sports_c/user/notification/notification.dart';
-
 
 const Color appPrimaryColor = Color(0xFF1994DD);
 const Color appSecondaryColor = Color(0xFF22C493);
@@ -87,42 +84,6 @@ class SearchPage extends StatelessWidget {
           title: const Text('Search Players'),
           centerTitle: true,
           backgroundColor: appPrimaryColor,
-          actions: [
-            IconButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const NotificationsPage()),
-                );
-              },
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(Icons.notifications_none),
-                  // Tiny badge (hard-coded 3 for now; replace with real count later)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Center(
-                        child: Text(
-                          '3',
-                          style: TextStyle(fontSize: 10, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              tooltip: 'Notifications',
-            ),
-          ],
         ),
         body: const SafeArea(child: MainSearchContainer()),
       ),
@@ -265,19 +226,6 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
                       ),
                       elevation: 3,
                       child: ListTile(
-                        onTap: () {
-                          final raw = state.results[index];
-                          final userName = raw.split('-').first.trim(); // example parse
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => OtherUserProfilePage(
-                                userName: userName,
-                                isCoach: index % 2 == 0, // just example flag
-                              ),
-                            ),
-                          );
-                        },
                         leading: CircleAvatar(
                           backgroundColor: appPrimaryColor,
                           child: const Icon(Icons.person, color: Colors.white),
@@ -286,7 +234,6 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
                         subtitle: const Text('Skill • Age • Height'),
                         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                       ),
-
                     );
                   },
                 );
