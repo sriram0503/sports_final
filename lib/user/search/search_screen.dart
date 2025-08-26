@@ -100,20 +100,14 @@ class MainSearchContainer extends StatefulWidget {
 
 class _MainSearchContainerState extends State<MainSearchContainer> {
   final List<String> sports = [
-    'Football',
     'Cricket',
     'Basketball',
     'Volleyball',
-    'Hockey',
-    'Badminton',
-    'Tennis',
     'Athletics',
-    'Boxing',
-    'Wrestling'
   ];
   final List<String> skillLevels = ['Beginner', 'Intermediate', 'Advanced'];
 
-  String selectedSport = 'Football';
+  String selectedSport = 'Volleyball';
   double minAge = 10;
   double maxAge = 25;
   double minHeight = 140;
