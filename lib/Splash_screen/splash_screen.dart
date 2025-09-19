@@ -31,7 +31,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   void onTimerFinished() {
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) =>  LoginPage()),
+      MaterialPageRoute(builder: (context) =>  DashBoardScreen()),
           (Route<dynamic> route) => false,
     );
   }

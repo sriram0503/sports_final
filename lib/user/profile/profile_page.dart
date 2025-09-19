@@ -27,6 +27,11 @@ class _ProfilePageState extends State<ProfilePage> {
   File? _backgroundImage;
   List<Map<String, dynamic>> userPosts = [];
 
+  // Variables for upload tracking
+  UploadTask? _profileUploadTask;
+  UploadTask? _backgroundUploadTask;
+  UploadTask? _postUploadTask;
+
   @override
   void initState() {
     super.initState();
@@ -98,12 +103,82 @@ class _ProfilePageState extends State<ProfilePage> {
       setState(() {
         if (isProfile) {
           _profileImage = File(pickedFile.path);
-          // In a real app, you would upload this to storage and update user profile
+          _uploadProfileImage();
         } else {
           _backgroundImage = File(pickedFile.path);
-          // In a real app, you would upload this to storage
+          _uploadBackgroundImage();
         }
       });
+    }
+  }
+
+  Future<void> _uploadProfileImage() async {
+    if (_profileImage == null) return;
+
+    try {
+      final String filePath = 'profile_images/${user!.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final ref = FirebaseStorage.instance.ref().child(filePath);
+
+      setState(() {
+        _profileUploadTask = ref.putFile(_profileImage!, SettableMetadata(contentType: 'image/jpeg'));
+      });
+
+      final snapshot = await _profileUploadTask!.whenComplete(() {});
+      final url = await snapshot.ref.getDownloadURL();
+
+      // Update user profile in Firestore
+      await firestore.collection('users').doc(user!.uid).update({
+        'profileImage': url
+      });
+
+      setState(() {
+        userData['profileImage'] = url;
+        _profileUploadTask = null;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile image updated!')),
+      );
+    } on FirebaseException catch (e) {
+      setState(() => _profileUploadTask = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: ${e.message}')),
+      );
+    }
+  }
+
+  Future<void> _uploadBackgroundImage() async {
+    if (_backgroundImage == null) return;
+
+    try {
+      final String filePath = 'background_images/${user!.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final ref = FirebaseStorage.instance.ref().child(filePath);
+
+      setState(() {
+        _backgroundUploadTask = ref.putFile(_backgroundImage!, SettableMetadata(contentType: 'image/jpeg'));
+      });
+
+      final snapshot = await _backgroundUploadTask!.whenComplete(() {});
+      final url = await snapshot.ref.getDownloadURL();
+
+      // Update user background in Firestore
+      await firestore.collection('users').doc(user!.uid).update({
+        'backgroundImage': url
+      });
+
+      setState(() {
+        userData['backgroundImage'] = url;
+        _backgroundUploadTask = null;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Background image updated!')),
+      );
+    } on FirebaseException catch (e) {
+      setState(() => _backgroundUploadTask = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: ${e.message}')),
+      );
     }
   }
 
@@ -168,30 +243,43 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _uploadPost(File image, String caption) async {
     try {
-      // Check if the file exists
+      // 1) sanity check
       if (!await image.exists()) {
         throw Exception('Image file does not exist');
       }
+      if (user == null) throw Exception('User not signed in');
 
-      // Create a unique filename for the image
-      String imageName = 'posts/${user!.uid}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+      // 2) storage ref
+      final String imageName = 'posts/${user!.uid}/${DateTime.now().millisecondsSinceEpoch}.jpg';
       final Reference storageRef = storage.ref().child(imageName);
 
-      // Upload the file to Firebase Storage
-      final UploadTask uploadTask = storageRef.putFile(image);
+      // 3) start upload and save the UploadTask so UI can show progress
+      setState(() {
+        _postUploadTask = storageRef.putFile(image, SettableMetadata(contentType: 'image/jpeg'));
+      });
 
-      // Wait for the upload to complete
-      final TaskSnapshot taskSnapshot = await uploadTask.whenComplete(() {});
+      // Optional: listen for progress & errors (useful for debugging)
+      _postUploadTask!.snapshotEvents.listen((TaskSnapshot snapshot) {
+        final bytesTransferred = snapshot.bytesTransferred;
+        final totalBytes = snapshot.totalBytes == 0 ? 1 : snapshot.totalBytes;
+        final progress = (bytesTransferred / totalBytes) * 100;
+        // print or update UI
+        debugPrint('Post upload: ${snapshot.state} — ${progress.toStringAsFixed(0)}%');
+      }, onError: (e) {
+        debugPrint('UploadTask snapshotEvents error: $e');
+      });
 
-      // Check if the upload was successful
+      // 4) await upload completion and obtain TaskSnapshot
+      final TaskSnapshot taskSnapshot = await _postUploadTask!; // await the UploadTask
+
+      // 5) ensure success then get download URL from the completed snapshot's ref
       if (taskSnapshot.state == TaskState.success) {
-        // Get the download URL
-        final String imageUrl = await storageRef.getDownloadURL();
+        final String imageUrl = await taskSnapshot.ref.getDownloadURL();
 
-        // Add post to Firestore
+        // 6) add post to Firestore
         await firestore.collection('posts').add({
           'userId': user!.uid,
-          'userName': '${userData['first_name']} ${userData['last_name']}',
+          'userName': '${userData['first_name'] ?? ''} ${userData['last_name'] ?? ''}'.trim(),
           'userImage': userData['profileImage'] ?? '',
           'imageUrl': imageUrl,
           'caption': caption,
@@ -200,21 +288,50 @@ class _ProfilePageState extends State<ProfilePage> {
           'comments': [],
         });
 
-        // Refresh posts
-        fetchUserPosts();
+        // cleanup + refresh UI
+        setState(() => _postUploadTask = null);
+        await fetchUserPosts();
 
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Post uploaded successfully!'))
+          const SnackBar(content: Text('Post uploaded successfully!')),
         );
       } else {
-        throw Exception('Upload failed with state: ${taskSnapshot.state}');
+        // upload finished but state is not success
+        setState(() => _postUploadTask = null);
+        throw Exception('Upload finished with state: ${taskSnapshot.state}');
       }
+    } on FirebaseException catch (e) {
+      setState(() => _postUploadTask = null);
+      debugPrint('FirebaseException uploading post: ${e.code} - ${e.message}');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error uploading post: ${e.message}')));
     } catch (e) {
-      print("Error uploading post: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error uploading post: $e'))
-      );
+      setState(() => _postUploadTask = null);
+      debugPrint('Error uploading post: $e');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error uploading post: $e')));
     }
+  }
+
+
+  Widget _buildProgress(UploadTask? task) {
+    if (task == null) return const SizedBox.shrink();
+
+    return StreamBuilder<TaskSnapshot>(
+      stream: task.snapshotEvents,
+      builder: (context, snapshot) {
+        final event = snapshot.data;
+        double progress = 0;
+        if (event != null && event.totalBytes > 0) {
+          progress = event.bytesTransferred / event.totalBytes;
+        }
+        return Column(
+          children: [
+            LinearProgressIndicator(value: progress),
+            const SizedBox(height: 8),
+            Text('${(progress * 100).toStringAsFixed(0)}%'),
+          ],
+        );
+      },
+    );
   }
 
   void _editInfoPopup() {
@@ -366,10 +483,13 @@ class _ProfilePageState extends State<ProfilePage> {
                       image: DecorationImage(
                         image: _backgroundImage != null
                             ? FileImage(_backgroundImage!)
-                            : const AssetImage("assets/bg_placeholder.jpg") as ImageProvider,
+                            : (userData['backgroundImage'] != null
+                            ? NetworkImage(userData['backgroundImage'])
+                            : const AssetImage("assets/bg_placeholder.jpg")) as ImageProvider,
                         fit: BoxFit.cover,
                       ),
                     ),
+                    child: _buildProgress(_backgroundUploadTask),
                   ),
                   Positioned(
                     top: 160,
@@ -381,11 +501,28 @@ class _ProfilePageState extends State<ProfilePage> {
                         boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2))],
                       ),
                       padding: const EdgeInsets.all(2),
-                      child: CircleAvatar(
-                        radius: 60,
-                        backgroundImage: _profileImage != null
-                            ? FileImage(_profileImage!)
-                            : const AssetImage("assets/profile_placeholder.png") as ImageProvider,
+                      child: Stack(
+                        children: [
+                          CircleAvatar(
+                            radius: 60,
+                            backgroundImage: _profileImage != null
+                                ? FileImage(_profileImage!)
+                                : (userData['profileImage'] != null
+                                ? NetworkImage(userData['profileImage'])
+                                : const AssetImage("assets/profile_placeholder.png")) as ImageProvider,
+                          ),
+                          if (_profileUploadTask != null)
+                            Positioned.fill(
+                              child: Container(
+                                color: Colors.black54,
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -709,6 +846,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ],
           ),
           const SizedBox(height: 8),
+          if (_postUploadTask != null) _buildProgress(_postUploadTask),
           userPosts.isEmpty
               ? const Center(
               child: Padding(

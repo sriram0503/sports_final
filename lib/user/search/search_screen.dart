@@ -14,6 +14,7 @@ class LatLng {
 
 class PlayerFilter {
   final String sport;
+  final String position;
   final double minAge;
   final double maxAge;
   final double minHeight;
@@ -27,6 +28,7 @@ class PlayerFilter {
 
   PlayerFilter({
     required this.sport,
+    required this.position,
     required this.minAge,
     required this.maxAge,
     required this.minHeight,
@@ -63,9 +65,37 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     on<ApplyFilter>((event, emit) async {
       emit(SearchLoading());
       await Future.delayed(const Duration(seconds: 1));
+
+      // Sports list
+      final sportsList = [
+        '1. Cricket',
+        '2. Basketball',
+        '3. Volleyball',
+        '4. Athletics',
+      ];
+
+      // Positions mapped by sport
+      final positionMap = {
+        'Cricket': ['Batsman', 'Bowler', 'All-Rounder', 'Wicket Keeper'],
+        'Basketball': ['Point Guard', 'Shooting Guard', 'Small Forward', 'Power Forward', 'Center'],
+        'Volleyball': ['Setter', 'Outside Hitter', 'Middle Blocker', 'Opposite Hitter', 'Libero'],
+        'Athletics': ['Sprinter', 'Long Distance Runner', 'High Jumper', 'Thrower'],
+      };
+
+      final positions = positionMap[event.filter.sport] ?? [];
+
+      // Example player results
+      final playerResults = [
+        '${event.filter.searchText} - ${event.filter.sport} - ${event.filter.position} - ${event.filter.skillLevel} - ${event.filter.location}',
+        'Player B - ${event.filter.sport} - ${event.filter.position}',
+      ];
+
+      // Combine sports, positions, and player results
       emit(SearchLoaded([
-        '${event.filter.searchText} - ${event.filter.sport} - ${event.filter.skillLevel} - ${event.filter.location}',
-        'Player B - ${event.filter.sport}',
+        ...sportsList,
+        '--- Positions in ${event.filter.sport} ---',
+        ...positions,
+        ...playerResults
       ]));
     });
   }
@@ -108,6 +138,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
   final List<String> skillLevels = ['Beginner', 'Intermediate', 'Advanced'];
 
   String selectedSport = 'Volleyball';
+  String selectedPosition = '';
   double minAge = 10;
   double maxAge = 25;
   double minHeight = 140;
@@ -129,6 +160,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
       }
     }
 
+    // Detect simple age/height/weight
     final ageMatch = RegExp(r'(\d{1,2})\s*(yo|years?)').firstMatch(lowerText);
     final heightMatch = RegExp(r'(\d{2,3})\s*cm').firstMatch(lowerText);
     final weightMatch = RegExp(r'(\d{2,3})\s*kg').firstMatch(lowerText);
@@ -159,6 +191,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
           sports: sports,
           skillLevels: skillLevels,
           selectedSport: selectedSport,
+          selectedPosition: selectedPosition,
           minAge: minAge,
           maxAge: maxAge,
           minHeight: minHeight,
@@ -179,6 +212,14 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
 
   @override
   Widget build(BuildContext context) {
+    // Always show sports list first
+    final sportsListWithPositions = [
+      '1. Cricket',
+      '2. Basketball',
+      '3. Volleyball',
+      '4. Athletics',
+    ];
+
     return Column(
       children: [
         const SizedBox(height: 10),
@@ -187,7 +228,7 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
           child: TextField(
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search),
-              hintText: 'Search players (e.g. Cricket 16yo 170cm)',
+              hintText: 'Search players (e.g. Cricket Batsman 16yo 170cm)',
               filled: true,
               fillColor: Colors.white,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16),
@@ -207,39 +248,34 @@ class _MainSearchContainerState extends State<MainSearchContainer> {
         Expanded(
           child: BlocBuilder<SearchBloc, SearchState>(
             builder: (context, state) {
+              List<String> results = sportsListWithPositions;
+
               if (state is SearchLoading) {
                 return const Center(child: CircularProgressIndicator());
               } else if (state is SearchLoaded) {
-                return ListView.builder(
-                  itemCount: state.results.length,
-                  itemBuilder: (context, index) {
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      elevation: 3,
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: appPrimaryColor,
-                          child: const Icon(Icons.person, color: Colors.white),
-                        ),
-                        title: Text(state.results[index]),
-                        subtitle: const Text('Skill • Age • Height'),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                      ),
-                    );
-                  },
-                );
-              } else {
-                return const Center(
-                  child: Text(
-                    'Use the search bar to filter players.',
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                );
+                results = state.results;
               }
+
+              return ListView.builder(
+                itemCount: results.length,
+                itemBuilder: (context, index) {
+                  return Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    elevation: 3,
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: appPrimaryColor,
+                        child: const Icon(Icons.sports, color: Colors.white),
+                      ),
+                      title: Text(results[index]),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    ),
+                  );
+                },
+              );
             },
           ),
         ),
@@ -252,6 +288,7 @@ class FilterForm extends StatefulWidget {
   final List<String> sports;
   final List<String> skillLevels;
   final String selectedSport;
+  final String selectedPosition;
   final double minAge, maxAge, minHeight, maxHeight, minWeight, maxWeight;
   final String selectedSkillLevel;
   final String locationInput;
@@ -263,6 +300,7 @@ class FilterForm extends StatefulWidget {
     required this.sports,
     required this.skillLevels,
     required this.selectedSport,
+    required this.selectedPosition,
     required this.minAge,
     required this.maxAge,
     required this.minHeight,
@@ -281,6 +319,7 @@ class FilterForm extends StatefulWidget {
 
 class _FilterFormState extends State<FilterForm> {
   late String sport;
+  late String position;
   late String skillLevel;
   late TextEditingController locationCtrl;
   late TextEditingController minAgeCtrl;
@@ -293,11 +332,21 @@ class _FilterFormState extends State<FilterForm> {
 
   final _formKey = GlobalKey<FormState>();
 
+  final Map<String, List<String>> positionMap = {
+    'Cricket': ['Batsman', 'Bowler', 'All-Rounder', 'Wicket Keeper'],
+    'Basketball': ['Point Guard', 'Shooting Guard', 'Small Forward', 'Power Forward', 'Center'],
+    'Volleyball': ['Setter', 'Outside Hitter', 'Middle Blocker', 'Opposite Hitter', 'Libero'],
+    'Athletics': ['Sprinter', 'Long Distance Runner', 'High Jumper', 'Thrower'],
+  };
+
   @override
   void initState() {
     super.initState();
     sport = widget.selectedSport;
     skillLevel = widget.selectedSkillLevel;
+    position = widget.selectedPosition.isNotEmpty
+        ? widget.selectedPosition
+        : (positionMap[widget.selectedSport]?.first ?? '');
     locationCtrl = TextEditingController(text: widget.locationInput);
     minAgeCtrl = TextEditingController(text: widget.minAge.toStringAsFixed(0));
     maxAgeCtrl = TextEditingController(text: widget.maxAge.toStringAsFixed(0));
@@ -321,41 +370,10 @@ class _FilterFormState extends State<FilterForm> {
     );
   }
 
-  String? _validateAge(String? value) {
-    if (value == null || value.isEmpty) return 'Please enter age';
-    final num = double.tryParse(value);
-    if (num == null) return 'Enter valid number';
-    if (num < 5 || num > 100) return 'Age must be 5-100';
-    return null;
-  }
-
-  String? _validateHeight(String? value) {
-    if (value == null || value.isEmpty) return 'Please enter height';
-    final num = double.tryParse(value);
-    if (num == null) return 'Enter valid number';
-    if (num < 100 || num > 250) return 'Height must be 100-250 cm';
-    return null;
-  }
-
-  String? _validateWeight(String? value) {
-    if (value == null || value.isEmpty) return 'Please enter weight';
-    final num = double.tryParse(value);
-    if (num == null) return 'Enter valid number';
-    if (num < 30 || num > 200) return 'Weight must be 30-200 kg';
-    return null;
-  }
-
-  String? _validateRange(String? minValue, String? maxValue, String fieldName) {
-    final min = double.tryParse(minValue ?? '');
-    final max = double.tryParse(maxValue ?? '');
-    if (min != null && max != null && min > max) {
-      return 'Max $fieldName must be ≥ min';
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final positions = positionMap[sport] ?? [];
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: const BoxDecoration(
@@ -377,98 +395,32 @@ class _FilterFormState extends State<FilterForm> {
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 value: sport,
-                items: widget.sports.map((sport) => DropdownMenuItem(
-                  value: sport,
-                  child: Text(sport),
-                )).toList(),
-                onChanged: (value) => setState(() => sport = value!),
+                items: widget.sports
+                    .map((sport) => DropdownMenuItem(value: sport, child: Text(sport)))
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    sport = value!;
+                    position = positionMap[sport]?.first ?? '';
+                  });
+                },
                 decoration: _inputDecoration('Sport'),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: minAgeCtrl,
-                      decoration: _inputDecoration('Min Age'),
-                      keyboardType: TextInputType.number,
-                      validator: _validateAge,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: maxAgeCtrl,
-                      decoration: _inputDecoration('Max Age'),
-                      keyboardType: TextInputType.number,
-                      validator: (value) {
-                        final ageValidation = _validateAge(value);
-                        if (ageValidation != null) return ageValidation;
-                        return _validateRange(minAgeCtrl.text, value, 'age');
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: minHeightCtrl,
-                      decoration: _inputDecoration('Min Height (cm)'),
-                      keyboardType: TextInputType.number,
-                      validator: _validateHeight,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: maxHeightCtrl,
-                      decoration: _inputDecoration('Max Height (cm)'),
-                      keyboardType: TextInputType.number,
-                      validator: (value) {
-                        final heightValidation = _validateHeight(value);
-                        if (heightValidation != null) return heightValidation;
-                        return _validateRange(minHeightCtrl.text, value, 'height');
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: minWeightCtrl,
-                      decoration: _inputDecoration('Min Weight (kg)'),
-                      keyboardType: TextInputType.number,
-                      validator: _validateWeight,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: maxWeightCtrl,
-                      decoration: _inputDecoration('Max Weight (kg)'),
-                      keyboardType: TextInputType.number,
-                      validator: (value) {
-                        final weightValidation = _validateWeight(value);
-                        if (weightValidation != null) return weightValidation;
-                        return _validateRange(minWeightCtrl.text, value, 'weight');
-                      },
-                    ),
-                  ),
-                ],
+              DropdownButtonFormField<String>(
+                value: position,
+                items: positions
+                    .map((pos) => DropdownMenuItem(value: pos, child: Text(pos)))
+                    .toList(),
+                onChanged: (value) => setState(() => position = value!),
+                decoration: _inputDecoration('Position'),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 value: skillLevel,
-                items: widget.skillLevels.map((level) => DropdownMenuItem(
-                  value: level,
-                  child: Text(level),
-                )).toList(),
+                items: widget.skillLevels
+                    .map((level) => DropdownMenuItem(value: level, child: Text(level)))
+                    .toList(),
                 onChanged: (value) => setState(() => skillLevel = value!),
                 decoration: _inputDecoration('Skill Level'),
               ),
@@ -479,12 +431,6 @@ class _FilterFormState extends State<FilterForm> {
                 decoration: _inputDecoration('Location').copyWith(
                   suffixIcon: Icon(Icons.location_on, color: appSecondaryColor),
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please select a location';
-                  }
-                  return null;
-                },
                 onTap: () async {
                   final result = await Navigator.push(
                     context,
@@ -492,7 +438,6 @@ class _FilterFormState extends State<FilterForm> {
                       builder: (context) => const LocationPickerScreen(),
                     ),
                   );
-
                   if (result != null) {
                     setState(() {
                       locationCtrl.text = result['address'];
@@ -521,6 +466,7 @@ class _FilterFormState extends State<FilterForm> {
                       if (_formKey.currentState!.validate()) {
                         final filter = PlayerFilter(
                           sport: sport,
+                          position: position,
                           minAge: double.parse(minAgeCtrl.text),
                           maxAge: double.parse(maxAgeCtrl.text),
                           minHeight: double.parse(minHeightCtrl.text),
