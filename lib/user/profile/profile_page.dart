@@ -1,10 +1,11 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:cloudinary_public/cloudinary_public.dart';
 import 'package:intl/intl.dart';
+import 'package:video_player/video_player.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -14,207 +15,316 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final ImagePicker picker = ImagePicker();
-  final FirebaseAuth auth = FirebaseAuth.instance;
-  final FirebaseFirestore firestore = FirebaseFirestore.instance;
-  final FirebaseStorage storage = FirebaseStorage.instance;
+  final ImagePicker _picker = ImagePicker();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final CloudinaryPublic _cloudinary = CloudinaryPublic('dboltoh0q', 'flutter_present', cache: false);
 
-  User? user;
-  Map<String, dynamic> userData = {};
-  List<String> achievements = [];
+  User? _user;
+  Map<String, dynamic> _userData = {};
+  List<String> _achievements = [];
+  List<Map<String, dynamic>> _userPosts = [];
 
-  File? _profileImage;
-  File? _backgroundImage;
-  List<Map<String, dynamic>> userPosts = [];
-
-  // Variables for upload tracking
-  UploadTask? _profileUploadTask;
-  UploadTask? _backgroundUploadTask;
-  UploadTask? _postUploadTask;
+  bool _isUploadingProfile = false;
+  bool _isUploadingBackground = false;
+  bool _isUploadingPost = false;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    user = auth.currentUser;
-    if (user != null) {
-      fetchUserData();
-      fetchUserPosts();
-    }
+    _initializeUser();
   }
 
-  Future<void> fetchUserData() async {
+  Future<void> _initializeUser() async {
+    setState(() {
+      _user = _auth.currentUser;
+    });
+
+    if (_user != null) {
+      await _fetchUserData();
+      await _fetchUserPosts();
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _fetchUserData() async {
     try {
-      DocumentSnapshot userDoc = await firestore.collection('users').doc(user!.uid).get();
+      final DocumentSnapshot userDoc =
+      await _firestore.collection('users').doc(_user!.uid).get();
+
       if (userDoc.exists) {
         setState(() {
-          userData = userDoc.data() as Map<String, dynamic>;
-          if (userData.containsKey('achievements')) {
-            achievements = List<String>.from(userData['achievements']);
-          }
+          _userData = userDoc.data() as Map<String, dynamic>;
+          _achievements = List<String>.from(_userData['achievements'] ?? []);
         });
       }
     } catch (e) {
-      print("Error fetching user data: $e");
+      _showErrorSnackBar('Error loading profile: $e');
     }
   }
 
-  Future<void> fetchUserPosts() async {
+  Future<void> _fetchUserPosts() async {
     try {
-      QuerySnapshot postsSnapshot = await firestore
+      if (_user == null) return;
+
+      final QuerySnapshot postsSnapshot = await _firestore
           .collection('posts')
-          .where('userId', isEqualTo: user!.uid)
-          .orderBy('timestamp', descending: true)
+          .where('userId', isEqualTo: _user!.uid)
           .get();
 
+      final List<Map<String, dynamic>> posts = postsSnapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return {
+          'id': doc.id,
+          'userId': data['userId'],
+          'caption': data['caption'] ?? '',
+          'timestamp': (data['timestamp'] as Timestamp).toDate(),
+          'mediaUrl': data['mediaUrl'],
+          'mediaType': data['mediaType'] ?? 'image',
+        };
+      }).toList();
+
+      posts.sort((a, b) => b['timestamp'].compareTo(a['timestamp']));
+
       setState(() {
-        userPosts = postsSnapshot.docs.map((doc) {
-          Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-          return {
-            'id': doc.id,
-            'imageUrl': data['imageUrl'],
-            'caption': data['caption'],
-            'timestamp': data['timestamp'],
-          };
-        }).toList();
+        _userPosts = posts;
       });
+
     } catch (e) {
-      print("Error fetching posts: $e");
+      debugPrint('Posts loading issue: $e');
+      setState(() {
+        _userPosts = [];
+      });
     }
+  }
+
+  // ✅ Enhanced Cloudinary upload for both images and videos
+  Future<String?> _uploadMediaToCloudinary(File file, {String? mediaType}) async {
+    try {
+      // Determine if it's a video based on file extension or provided mediaType
+      final isVideo = mediaType == 'video' ||
+          file.path.toLowerCase().endsWith('.mp4') ||
+          file.path.toLowerCase().endsWith('.mov') ||
+          file.path.toLowerCase().endsWith('.avi');
+
+      CloudinaryResponse response = await _cloudinary.uploadFile(
+        CloudinaryFile.fromFile(
+          file.path,
+          folder: 'user_media/${_user!.uid}',
+          resourceType: isVideo ? CloudinaryResourceType.Video : CloudinaryResourceType.Image,
+        ),
+      );
+      return response.secureUrl;
+    } catch (e) {
+      debugPrint('Cloudinary upload error: $e');
+      return null;
+    }
+  }
+
+  // ✅ Video player widget for video posts
+  Widget _buildVideoPlayer(String videoUrl) {
+    return FutureBuilder<VideoPlayerController>(
+      future: _initializeVideoController(videoUrl),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done && snapshot.hasData) {
+          final controller = snapshot.data!;
+          return AspectRatio(
+            aspectRatio: controller.value.aspectRatio,
+            child: Stack(
+              children: [
+                VideoPlayer(controller),
+                Positioned.fill(
+                  child: IconButton(
+                    icon: Icon(
+                      controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      color: Colors.white,
+                      size: 50,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        if (controller.value.isPlaying) {
+                          controller.pause();
+                        } else {
+                          controller.play();
+                        }
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        } else {
+          return Container(
+            height: 300,
+            color: Colors.black,
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+      },
+    );
+  }
+
+  Future<VideoPlayerController> _initializeVideoController(String videoUrl) async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+    await controller.initialize();
+    return controller;
   }
 
   Future<void> _pickImage(bool isProfile) async {
-    final source = await showDialog<ImageSource>(
+    final ImageSource? source = await showDialog<ImageSource>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Select Image Source"),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, ImageSource.camera),
-              child: const Text("Camera")),
+            onPressed: () => Navigator.pop(context, ImageSource.camera),
+            child: const Text("Camera"),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(context, ImageSource.gallery),
-              child: const Text("Gallery")),
+            onPressed: () => Navigator.pop(context, ImageSource.gallery),
+            child: const Text("Gallery"),
+          ),
         ],
       ),
     );
+
     if (source == null) return;
-    final pickedFile = await picker.pickImage(source: source);
+
+    final XFile? pickedFile = await _picker.pickImage(source: source);
     if (pickedFile != null) {
+      await _uploadImageToCloudinary(File(pickedFile.path), isProfile);
+    }
+  }
+
+  Future<void> _uploadImageToCloudinary(File image, bool isProfile) async {
+    if (_user == null) return;
+
+    try {
       setState(() {
         if (isProfile) {
-          _profileImage = File(pickedFile.path);
-          _uploadProfileImage();
+          _isUploadingProfile = true;
         } else {
-          _backgroundImage = File(pickedFile.path);
-          _uploadBackgroundImage();
+          _isUploadingBackground = true;
         }
       });
+
+      final String? imageUrl = await _uploadMediaToCloudinary(image);
+
+      if (imageUrl == null) {
+        throw Exception('Failed to upload image to Cloudinary');
+      }
+
+      final String fieldName = isProfile ? 'profileImageUrl' : 'backgroundImageUrl';
+      await _firestore.collection('users').doc(_user!.uid).update({
+        fieldName: imageUrl,
+      });
+
+      setState(() {
+        _userData[fieldName] = imageUrl;
+        if (isProfile) {
+          _isUploadingProfile = false;
+        } else {
+          _isUploadingBackground = false;
+        }
+      });
+
+      _showSuccessSnackBar('${isProfile ? 'Profile' : 'Background'} image updated!');
+    } catch (e) {
+      setState(() {
+        if (isProfile) {
+          _isUploadingProfile = false;
+        } else {
+          _isUploadingBackground = false;
+        }
+      });
+      _showErrorSnackBar('Upload failed: $e');
     }
   }
 
-  Future<void> _uploadProfileImage() async {
-    if (_profileImage == null) return;
+  // ✅ Enhanced create post with video support
+  Future<void> _createPost() async {
+    final String? mediaType = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Select Media Type"),
+        content: const Text("Choose what you want to post"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'image'),
+            child: const Text("Image"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'video'),
+            child: const Text("Video"),
+          ),
+        ],
+      ),
+    );
 
-    try {
-      final String filePath = 'profile_images/${user!.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final ref = FirebaseStorage.instance.ref().child(filePath);
+    if (mediaType == null) return;
 
-      setState(() {
-        _profileUploadTask = ref.putFile(_profileImage!, SettableMetadata(contentType: 'image/jpeg'));
-      });
-
-      final snapshot = await _profileUploadTask!.whenComplete(() {});
-      final url = await snapshot.ref.getDownloadURL();
-
-      // Update user profile in Firestore
-      await firestore.collection('users').doc(user!.uid).update({
-        'profileImage': url
-      });
-
-      setState(() {
-        userData['profileImage'] = url;
-        _profileUploadTask = null;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile image updated!')),
-      );
-    } on FirebaseException catch (e) {
-      setState(() => _profileUploadTask = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Upload failed: ${e.message}')),
-      );
-    }
-  }
-
-  Future<void> _uploadBackgroundImage() async {
-    if (_backgroundImage == null) return;
-
-    try {
-      final String filePath = 'background_images/${user!.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final ref = FirebaseStorage.instance.ref().child(filePath);
-
-      setState(() {
-        _backgroundUploadTask = ref.putFile(_backgroundImage!, SettableMetadata(contentType: 'image/jpeg'));
-      });
-
-      final snapshot = await _backgroundUploadTask!.whenComplete(() {});
-      final url = await snapshot.ref.getDownloadURL();
-
-      // Update user background in Firestore
-      await firestore.collection('users').doc(user!.uid).update({
-        'backgroundImage': url
-      });
-
-      setState(() {
-        userData['backgroundImage'] = url;
-        _backgroundUploadTask = null;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Background image updated!')),
-      );
-    } on FirebaseException catch (e) {
-      setState(() => _backgroundUploadTask = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Upload failed: ${e.message}')),
-      );
-    }
-  }
-
-  Future<void> _pickMediaPost() async {
-    final source = await showDialog<ImageSource>(
+    final ImageSource? source = await showDialog<ImageSource>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Select Media Source"),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, ImageSource.camera),
-              child: const Text("Camera")),
+            onPressed: () => Navigator.pop(context, ImageSource.camera),
+            child: const Text("Camera"),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(context, ImageSource.gallery),
-              child: const Text("Gallery")),
+            onPressed: () => Navigator.pop(context, ImageSource.gallery),
+            child: const Text("Gallery"),
+          ),
         ],
       ),
     );
+
     if (source == null) return;
-    final pickedFile = await picker.pickImage(source: source);
+
+    XFile? pickedFile;
+    if (mediaType == 'image') {
+      pickedFile = await _picker.pickImage(source: source);
+    } else {
+      pickedFile = await _picker.pickVideo(source: source);
+    }
+
     if (pickedFile != null) {
-      await _showPostDialog(File(pickedFile.path));
+      await _showPostDialog(File(pickedFile.path), mediaType);
     }
   }
 
-  Future<void> _showPostDialog(File image) async {
-    TextEditingController captionController = TextEditingController();
+  // ✅ Enhanced post dialog for both images and videos
+  Future<void> _showPostDialog(File mediaFile, String mediaType) async {
+    final TextEditingController captionController = TextEditingController();
 
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Create Post"),
+        title: Text("Create ${mediaType == 'image' ? 'Image' : 'Video'} Post"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.file(image, height: 200, fit: BoxFit.cover),
+            if (mediaType == 'image')
+              Image.file(mediaFile, height: 200, fit: BoxFit.cover)
+            else
+              Container(
+                height: 200,
+                color: Colors.black,
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.videocam, color: Colors.white, size: 50),
+                    SizedBox(height: 10),
+                    Text("Video Selected", style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
             const SizedBox(height: 20),
             TextField(
               controller: captionController,
@@ -228,217 +338,130 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel")),
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
           ElevatedButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await _uploadPost(image, captionController.text);
-              },
-              child: const Text("Post")),
+            onPressed: () async {
+              Navigator.pop(context);
+              await _savePost(mediaFile, captionController.text.trim(), mediaType);
+            },
+            child: const Text("Post"),
+          ),
         ],
       ),
     );
   }
 
-  Future<void> _uploadPost(File image, String caption) async {
+  // ✅ Enhanced save post for both images and videos
+  Future<void> _savePost(File mediaFile, String caption, String mediaType) async {
+    if (_user == null) return;
+
     try {
-      // 1) sanity check
-      if (!await image.exists()) {
-        throw Exception('Image file does not exist');
+      setState(() => _isUploadingPost = true);
+
+      // Show upload progress dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Text("Uploading ${mediaType == 'image' ? 'Image' : 'Video'}"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text("Please wait while your ${mediaType == 'image' ? 'image' : 'video'} is being uploaded..."),
+            ],
+          ),
+        ),
+      );
+
+      final String? mediaUrl = await _uploadMediaToCloudinary(mediaFile, mediaType: mediaType);
+
+      // Close progress dialog
+      if (mounted) {
+        Navigator.pop(context);
       }
-      if (user == null) throw Exception('User not signed in');
 
-      // 2) storage ref
-      final String imageName = 'posts/${user!.uid}/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final Reference storageRef = storage.ref().child(imageName);
-
-      // 3) start upload and save the UploadTask so UI can show progress
-      setState(() {
-        _postUploadTask = storageRef.putFile(image, SettableMetadata(contentType: 'image/jpeg'));
-      });
-
-      // Optional: listen for progress & errors (useful for debugging)
-      _postUploadTask!.snapshotEvents.listen((TaskSnapshot snapshot) {
-        final bytesTransferred = snapshot.bytesTransferred;
-        final totalBytes = snapshot.totalBytes == 0 ? 1 : snapshot.totalBytes;
-        final progress = (bytesTransferred / totalBytes) * 100;
-        // print or update UI
-        debugPrint('Post upload: ${snapshot.state} — ${progress.toStringAsFixed(0)}%');
-      }, onError: (e) {
-        debugPrint('UploadTask snapshotEvents error: $e');
-      });
-
-      // 4) await upload completion and obtain TaskSnapshot
-      final TaskSnapshot taskSnapshot = await _postUploadTask!; // await the UploadTask
-
-      // 5) ensure success then get download URL from the completed snapshot's ref
-      if (taskSnapshot.state == TaskState.success) {
-        final String imageUrl = await taskSnapshot.ref.getDownloadURL();
-
-        // 6) add post to Firestore
-        await firestore.collection('posts').add({
-          'userId': user!.uid,
-          'userName': '${userData['first_name'] ?? ''} ${userData['last_name'] ?? ''}'.trim(),
-          'userImage': userData['profileImage'] ?? '',
-          'imageUrl': imageUrl,
-          'caption': caption,
-          'timestamp': FieldValue.serverTimestamp(),
-          'likes': 0,
-          'comments': [],
-        });
-
-        // cleanup + refresh UI
-        setState(() => _postUploadTask = null);
-        await fetchUserPosts();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Post uploaded successfully!')),
-        );
-      } else {
-        // upload finished but state is not success
-        setState(() => _postUploadTask = null);
-        throw Exception('Upload finished with state: ${taskSnapshot.state}');
+      if (mediaUrl == null) {
+        throw Exception('Failed to upload media to Cloudinary');
       }
-    } on FirebaseException catch (e) {
-      setState(() => _postUploadTask = null);
-      debugPrint('FirebaseException uploading post: ${e.code} - ${e.message}');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error uploading post: ${e.message}')));
+
+      final postData = {
+        'userId': _user!.uid,
+        'caption': caption,
+        'mediaUrl': mediaUrl,
+        'mediaType': mediaType,
+        'timestamp': Timestamp.now(),
+        'likes': 0,
+        'comments': [],
+      };
+
+      await _firestore.collection('posts').add(postData);
+
+      await _fetchUserPosts();
+      _showSuccessSnackBar('${mediaType == 'image' ? 'Image' : 'Video'} posted successfully!');
+
     } catch (e) {
-      setState(() => _postUploadTask = null);
-      debugPrint('Error uploading post: $e');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error uploading post: $e')));
+      if (mounted) {
+        Navigator.pop(context); // Close progress dialog on error
+      }
+      _showErrorSnackBar('Error saving post: $e');
+    } finally {
+      setState(() => _isUploadingPost = false);
     }
   }
 
-
-  Widget _buildProgress(UploadTask? task) {
-    if (task == null) return const SizedBox.shrink();
-
-    return StreamBuilder<TaskSnapshot>(
-      stream: task.snapshotEvents,
-      builder: (context, snapshot) {
-        final event = snapshot.data;
-        double progress = 0;
-        if (event != null && event.totalBytes > 0) {
-          progress = event.bytesTransferred / event.totalBytes;
-        }
-        return Column(
-          children: [
-            LinearProgressIndicator(value: progress),
-            const SizedBox(height: 8),
-            Text('${(progress * 100).toStringAsFixed(0)}%'),
-          ],
-        );
-      },
-    );
-  }
-
-  void _editInfoPopup() {
-    TextEditingController firstNameCtrl = TextEditingController(
-        text: userData['first_name'] ?? '');
-    TextEditingController lastNameCtrl = TextEditingController(
-        text: userData['last_name'] ?? '');
-    TextEditingController bioCtrl = TextEditingController(text: userData['bio'] ?? '');
-    TextEditingController phoneCtrl = TextEditingController(text: userData['phone'] ?? '');
-    TextEditingController emailCtrl = TextEditingController(text: user?.email ?? '');
-    TextEditingController locCtrl = TextEditingController(text: userData['location_address'] ?? '');
-    TextEditingController ageCtrl = TextEditingController(text: userData['age']?.toString() ?? '');
-    TextEditingController heightCtrl = TextEditingController(text: userData['height']?.toString() ?? '');
-    TextEditingController weightCtrl = TextEditingController(text: userData['weight']?.toString() ?? '');
+  void _editProfileInfo() {
+    final TextEditingController firstNameCtrl = TextEditingController(text: _userData['first_name'] ?? '');
+    final TextEditingController lastNameCtrl = TextEditingController(text: _userData['last_name'] ?? '');
+    final TextEditingController bioCtrl = TextEditingController(text: _userData['bio'] ?? '');
+    final TextEditingController phoneCtrl = TextEditingController(text: _userData['phone'] ?? '');
+    final TextEditingController locationCtrl = TextEditingController(text: _userData['location_address'] ?? '');
+    final TextEditingController ageCtrl = TextEditingController(text: _userData['age']?.toString() ?? '');
+    final TextEditingController heightCtrl = TextEditingController(text: _userData['height']?.toString() ?? '');
+    final TextEditingController weightCtrl = TextEditingController(text: _userData['weight']?.toString() ?? '');
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Edit Profile Info"),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: firstNameCtrl,
-                  decoration: const InputDecoration(labelText: "First Name", border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: lastNameCtrl,
-                  decoration: const InputDecoration(labelText: "Last Name", border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: bioCtrl,
-                  decoration: const InputDecoration(labelText: "Bio", border: OutlineInputBorder()),
-                  maxLines: 2,
-                  minLines: 2,
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: phoneCtrl,
-                  decoration: const InputDecoration(labelText: "Phone", border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: emailCtrl,
-                  decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder()),
-                  readOnly: true,
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: locCtrl,
-                  decoration: const InputDecoration(labelText: "Location", border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: ageCtrl,
-                  decoration: const InputDecoration(labelText: "Age", border: OutlineInputBorder()),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: heightCtrl,
-                  decoration: const InputDecoration(labelText: "Height (cm)", border: OutlineInputBorder()),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: weightCtrl,
-                  decoration: const InputDecoration(labelText: "Weight (kg)", border: OutlineInputBorder()),
-                  keyboardType: TextInputType.number,
-                ),
-              ],
-            ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: firstNameCtrl, decoration: const InputDecoration(labelText: "First Name")),
+              const SizedBox(height: 10),
+              TextField(controller: lastNameCtrl, decoration: const InputDecoration(labelText: "Last Name")),
+              const SizedBox(height: 10),
+              TextField(controller: bioCtrl, decoration: const InputDecoration(labelText: "Bio"), maxLines: 2),
+              const SizedBox(height: 10),
+              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: "Phone")),
+              const SizedBox(height: 10),
+              TextField(controller: locationCtrl, decoration: const InputDecoration(labelText: "Location")),
+              const SizedBox(height: 10),
+              TextField(controller: ageCtrl, decoration: const InputDecoration(labelText: "Age"), keyboardType: TextInputType.number),
+              const SizedBox(height: 10),
+              TextField(controller: heightCtrl, decoration: const InputDecoration(labelText: "Height (cm)"), keyboardType: TextInputType.number),
+              const SizedBox(height: 10),
+              TextField(controller: weightCtrl, decoration: const InputDecoration(labelText: "Weight (kg)"), keyboardType: TextInputType.number),
+            ],
           ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
-            onPressed: () {
-              // Update user data in Firestore
-              firestore.collection('users').doc(user!.uid).update({
-                'first_name': firstNameCtrl.text,
-                'last_name': lastNameCtrl.text,
-                'bio': bioCtrl.text,
-                'phone': phoneCtrl.text,
-                'location_address': locCtrl.text,
-                'age': int.tryParse(ageCtrl.text),
-                'height': int.tryParse(heightCtrl.text),
-                'weight': int.tryParse(weightCtrl.text),
-              }).then((_) {
-                setState(() {
-                  userData['first_name'] = firstNameCtrl.text;
-                  userData['last_name'] = lastNameCtrl.text;
-                  userData['bio'] = bioCtrl.text;
-                  userData['phone'] = phoneCtrl.text;
-                  userData['location_address'] = locCtrl.text;
-                  userData['age'] = int.tryParse(ageCtrl.text);
-                  userData['height'] = int.tryParse(heightCtrl.text);
-                  userData['weight'] = int.tryParse(weightCtrl.text);
-                });
-                Navigator.pop(context);
-              });
-            },
+            onPressed: () => _updateProfileInfo(
+              firstNameCtrl.text,
+              lastNameCtrl.text,
+              bioCtrl.text,
+              phoneCtrl.text,
+              locationCtrl.text,
+              ageCtrl.text,
+              heightCtrl.text,
+              weightCtrl.text,
+            ),
             child: const Text("Save"),
           ),
         ],
@@ -446,125 +469,199 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  Future<void> _updateProfileInfo(
+      String firstName, String lastName, String bio, String phone,
+      String location, String age, String height, String weight,
+      ) async {
+    try {
+      await _firestore.collection('users').doc(_user!.uid).update({
+        'first_name': firstName,
+        'last_name': lastName,
+        'bio': bio,
+        'phone': phone,
+        'location_address': location,
+        'age': int.tryParse(age),
+        'height': int.tryParse(height),
+        'weight': int.tryParse(weight),
+      });
+
+      setState(() {
+        _userData['first_name'] = firstName;
+        _userData['last_name'] = lastName;
+        _userData['bio'] = bio;
+        _userData['phone'] = phone;
+        _userData['location_address'] = location;
+        _userData['age'] = int.tryParse(age);
+        _userData['height'] = int.tryParse(height);
+        _userData['weight'] = int.tryParse(weight);
+      });
+
+      Navigator.pop(context);
+      _showSuccessSnackBar('Profile updated successfully!');
+    } catch (e) {
+      _showErrorSnackBar('Error updating profile: $e');
+    }
+  }
+
+  void _showSuccessSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
+  }
+
+  void _showErrorSnackBar(String message, {Duration duration = const Duration(seconds: 3)}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red, duration: duration),
+    );
+  }
+
+  Widget _buildLoadingIndicator() {
+    return const Center(child: CircularProgressIndicator());
+  }
+
+  Widget _buildUserNotLoggedIn() {
+    return const Center(child: Text("Please log in to view your profile"));
+  }
+
   @override
   Widget build(BuildContext context) {
-    String fullName = '';
-    if (userData['first_name'] != null && userData['last_name'] != null) {
-      fullName = '${userData['first_name']} ${userData['last_name']}';
-    } else {
-      fullName = user?.displayName ?? 'User';
+    if (_isLoading) {
+      return Scaffold(body: _buildLoadingIndicator());
     }
+
+    if (_user == null) {
+      return Scaffold(body: _buildUserNotLoggedIn());
+    }
+
+    final String fullName = '${_userData['first_name'] ?? ''} ${_userData['last_name'] ?? ''}'.trim();
+    final String userEmail = _user?.email ?? _userData['email'] ?? '';
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
-        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-              Navigator.pushNamed(context, '/');
+              await _auth.signOut();
+              Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
             },
             icon: const Icon(Icons.logout),
           )
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    height: 220,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      image: DecorationImage(
-                        image: _backgroundImage != null
-                            ? FileImage(_backgroundImage!)
-                            : (userData['backgroundImage'] != null
-                            ? NetworkImage(userData['backgroundImage'])
-                            : const AssetImage("assets/bg_placeholder.jpg")) as ImageProvider,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    child: _buildProgress(_backgroundUploadTask),
-                  ),
-                  Positioned(
-                    top: 160,
-                    left: MediaQuery.of(context).size.width / 2 - 60,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white,
-                        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2))],
-                      ),
-                      padding: const EdgeInsets.all(2),
-                      child: Stack(
-                        children: [
-                          CircleAvatar(
-                            radius: 60,
-                            backgroundImage: _profileImage != null
-                                ? FileImage(_profileImage!)
-                                : (userData['profileImage'] != null
-                                ? NetworkImage(userData['profileImage'])
-                                : const AssetImage("assets/profile_placeholder.png")) as ImageProvider,
-                          ),
-                          if (_profileUploadTask != null)
-                            Positioned.fill(
-                              child: Container(
-                                color: Colors.black54,
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 8,
-                    right: 12,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        GestureDetector(
-                          onTap: () => _pickImage(false),
-                          child: _editIcon(),
-                        ),
-                        const SizedBox(height: 8),
-                        GestureDetector(
-                          onTap: () => _pickImage(true),
-                          child: _editIcon(),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 70),
-              _infoCard(fullName),
-              _physicalAttributesCard(),
-              if (userData['role'] == 'Player') _playerInfoCard(),
-              if (userData['role'] == 'Coach') _coachInfoCard(),
-              _buildEditableChips(achievements, "Achievements"),
-              _postGallery(),
-            ],
-          ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            // Header Section with Background and Profile Image
+            _buildHeaderSection(),
+            SizedBox(height: 60),
+
+            // User Information Cards
+            _buildInfoCard(fullName),
+            _buildPhysicalAttributesCard(),
+
+            // Role-specific cards
+            if (_userData['role'] == 'Player') _buildPlayerInfoCard(),
+            if (_userData['role'] == 'Coach') _buildCoachInfoCard(),
+
+            // Achievements
+            _buildEditableChipsSection(),
+
+            // Posts Gallery
+            _buildPostsSection(),
+          ],
         ),
       ),
     );
   }
 
-  Widget _infoCard(String fullName) {
+  Widget _buildHeaderSection() {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // Background Image
+        Container(
+          height: 200,
+          width: double.infinity,
+          child: Stack(
+            children: [
+              _userData['backgroundImageUrl'] != null && _userData['backgroundImageUrl']!.isNotEmpty
+                  ? Image.network(
+                _userData['backgroundImageUrl']!,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(color: Colors.grey[300]);
+                },
+              )
+                  : Container(color: Colors.grey[300]),
+              if (_isUploadingBackground) ...[
+                Container(color: Colors.black54),
+                const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white))),
+              ],
+            ],
+          ),
+        ),
+
+        // Profile Image
+        Positioned(
+          top: 155,
+          bottom: -75,
+          left: MediaQuery.of(context).size.width / 2 - 60,
+          child: Container(
+            decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
+            padding: const EdgeInsets.all(4),
+            child: Stack(
+              children: [
+                CircleAvatar(
+                  radius: 60,
+                  backgroundImage: _userData['profileImageUrl'] != null && _userData['profileImageUrl']!.isNotEmpty
+                      ? NetworkImage(_userData['profileImageUrl']!)
+                      : const AssetImage("assets/profile_placeholder.png") as ImageProvider,
+                ),
+                if (_isUploadingProfile) ...[
+                  Positioned.fill(child: Container(color: Colors.black54)),
+                  const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white))),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        // Edit Buttons
+        Positioned(
+          top: 10,
+          right: 10,
+          child: Column(
+            children: [
+              _buildEditIcon(onTap: () => _pickImage(false), tooltip: 'Edit Background'),
+              const SizedBox(height: 8),
+              _buildEditIcon(onTap: () => _pickImage(true), tooltip: 'Edit Profile'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditIcon({required VoidCallback onTap, required String tooltip}) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+          child: const Icon(Icons.edit, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+
+
+  Widget _buildInfoCard(String fullName) {
     return Card(
       margin: const EdgeInsets.all(16),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -572,266 +669,215 @@ class _ProfilePageState extends State<ProfilePage> {
           children: [
             Row(
               children: [
-                Expanded(
-                  child: Text(fullName,
-                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                ),
-                IconButton(onPressed: _editInfoPopup, icon: const Icon(Icons.edit))
+                Expanded(child: Text(fullName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
+                IconButton(onPressed: _editProfileInfo, icon: const Icon(Icons.edit)),
               ],
             ),
-            const SizedBox(height: 8),
-            if (userData['role'] != null)
-              Text("Role: ${userData['role']}", style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(userData['bio'] ?? 'No bio provided'),
+            if (_userData['role'] != null) Text("Role: ${_userData['role']}"),
+            if (_userData['bio'] != null && _userData['bio']!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(_userData['bio']!),
+            ],
             const SizedBox(height: 12),
-            if (userData['location_address'] != null)
-              Text("📍 ${userData['location_address']}"),
-            const SizedBox(height: 6),
-            Text("📧 ${user?.email ?? 'No email'}"),
-            const SizedBox(height: 6),
-            if (userData['phone'] != null) Text("📞 ${userData['phone']}"),
+            if (_userData['location_address'] != null && _userData['location_address']!.isNotEmpty)
+              Text("📍 ${_userData['location_address']}"),
+            Text("📧 ${_user?.email ?? 'No email'}"),
+            if (_userData['phone'] != null && _userData['phone']!.isNotEmpty)
+              Text("📞 ${_userData['phone']}"),
           ],
         ),
       ),
     );
   }
 
-  Widget _physicalAttributesCard() {
+  Widget _buildPhysicalAttributesCard() {
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.symmetric(horizontal: 16),
         child: SizedBox(
           width: double.infinity,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Physical Information",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 20,
-                runSpacing: 15,
-                children: [
-                  if (userData['age'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['age']}",
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const Text("Age"),
-                      ],
-                    ),
-                  if (userData['height'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['height']} cm",
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const Text("Height"),
-                      ],
-                    ),
-                  if (userData['weight'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['weight']} kg",
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const Text("Weight"),
-                      ],
-                    ),
-                  if (userData['gender'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['gender']}",
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const Text("Gender"),
-                      ],
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _playerInfoCard() {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: SizedBox(
-          width: double.infinity,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Player Information",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 20,
-                runSpacing: 15,
-                children: [
-                  if (userData['sport'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['sport']}",
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        const Text("Sport"),
-                      ],
-                    ),
-                  if (userData['position'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['position']}",
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        const Text("Position"),
-                      ],
-                    ),
-                  if (userData['level'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['level']}",
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        const Text("Level"),
-                      ],
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _coachInfoCard() {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: SizedBox(
-          width: double.infinity,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Coach Information",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 20,
-                runSpacing: 15,
-                children: [
-                  if (userData['min_fee'] != null && userData['max_fee'] != null)
-                    Column(
-                      children: [
-                        Text("\$${userData['min_fee']} - \$${userData['max_fee']}",
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        const Text("Fee Range"),
-                      ],
-                    ),
-                  if (userData['experience'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['experience']} yrs",
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        const Text("Experience"),
-                      ],
-                    ),
-                  if (userData['specialization'] != null)
-                    Column(
-                      children: [
-                        Text("${userData['specialization']}",
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        const Text("Specialization"),
-                      ],
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEditableChips(List<String> list, String title) {
-    TextEditingController ctrl = TextEditingController();
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                IconButton(
-                  icon: const Icon(Icons.add_circle, color: Colors.blue),
-                  onPressed: () => showDialog(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: Text("Add $title"),
-                      content: TextField(
-                        controller: ctrl,
-                        decoration: const InputDecoration(
-                          labelText: "Enter value",
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-                        ElevatedButton(
-                          onPressed: () {
-                            if (ctrl.text.trim().isNotEmpty) {
-                              setState(() => list.add(ctrl.text.trim()));
-                              // Update in Firestore
-                              firestore.collection('users').doc(user!.uid).update({
-                                'achievements': FieldValue.arrayUnion([ctrl.text.trim()])
-                              });
-                            }
-                            Navigator.pop(context);
-                          },
-                          child: const Text("Add"),
-                        )
-                      ],
-                    ),
-                  ),
-                )
+                const Text("Physical Information", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 20,
+                  runSpacing: 10,
+                  children: [
+                    if (_userData['age'] != null) _buildInfoItem("${_userData['age']}", "Age"),
+                    if (_userData['height'] != null) _buildInfoItem("${_userData['height']} cm", "Height"),
+                    if (_userData['weight'] != null) _buildInfoItem("${_userData['weight']} kg", "Weight"),
+                    if (_userData['gender'] != null) _buildInfoItem("${_userData['gender']}", "Gender"),
+                  ],
+                ),
               ],
             ),
-            Wrap(
-              spacing: 6,
-              children: list
-                  .map((item) => Chip(
-                label: Text(item),
-                deleteIcon: const Icon(Icons.close),
-                onDeleted: () {
-                  setState(() => list.remove(item));
-                  // Update in Firestore
-                  firestore.collection('users').doc(user!.uid).update({
-                    'achievements': FieldValue.arrayRemove([item])
-                  });
-                },
-              ))
-                  .toList(),
-            )
-          ],
+          ),
+
+        )
+    );
+  }
+
+  Widget _buildInfoItem(String value, String label) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    );
+  }
+
+  Widget _buildPlayerInfoCard() {
+    return Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: SizedBox(
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Player Information", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 20,
+                  runSpacing: 10,
+                  children: [
+                    if (_userData['sport'] != null) _buildInfoItem("${_userData['sport']}", "Sport"),
+                    if (_userData['position'] != null) _buildInfoItem("${_userData['position']}", "Position"),
+                    if (_userData['level'] != null) _buildInfoItem("${_userData['level']}", "Level"),
+                  ],
+                ),
+
+              ],
+            ),
+          ),
+        )
+    );
+
+  }
+
+  Widget _buildCoachInfoCard() {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: SizedBox(
+        width: double.infinity,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Coach Information",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 20,
+                runSpacing: 10,
+                children: [
+                  if (_userData['min_fee'] != null && _userData['max_fee'] != null)
+                    _buildInfoItem(
+                      "\$${_userData['min_fee']} - \$${_userData['max_fee']}",
+                      "Fee Range",
+                    ),
+                  if (_userData['experience'] != null)
+                    _buildInfoItem("${_userData['experience']} yrs", "Experience"),
+                  if (_userData['specialization'] != null)
+                    _buildInfoItem("${_userData['specialization']}", "Specialization"),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _postGallery() {
+  Widget _buildEditableChipsSection() {
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: SizedBox(
+        width: double.infinity,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Achievements",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _achievements
+                      .map((achievement) => Chip(
+                    label: Text(achievement),
+                    onDeleted: () => _removeAchievement(achievement),
+                  ))
+                      .toList(),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _addAchievement,
+                  icon: const Icon(Icons.add),
+                  label: const Text("Add Achievement"),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  void _addAchievement() {
+    final TextEditingController controller = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Add Achievement"),
+        content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Enter achievement")),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                _saveAchievement(controller.text.trim());
+                Navigator.pop(context);
+              }
+            },
+            child: const Text("Add"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveAchievement(String achievement) async {
+    setState(() => _achievements.add(achievement));
+
+    await _firestore.collection('users').doc(_user!.uid).update({
+      'achievements': FieldValue.arrayUnion([achievement])
+    });
+  }
+
+  Future<void> _removeAchievement(String achievement) async {
+    setState(() => _achievements.remove(achievement));
+
+    await _firestore.collection('users').doc(_user!.uid).update({
+      'achievements': FieldValue.arrayRemove([achievement])
+    });
+  }
+
+  Widget _buildPostsSection() {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -840,110 +886,110 @@ class _ProfilePageState extends State<ProfilePage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Media Posts",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              IconButton(onPressed: _pickMediaPost, icon: const Icon(Icons.add_a_photo))
+              const Text("Posts", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              IconButton(
+                  onPressed: _createPost,
+                  icon: const Icon(Icons.add_a_photo)
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          if (_postUploadTask != null) _buildProgress(_postUploadTask),
-          userPosts.isEmpty
+
+          if (_isUploadingPost) const LinearProgressIndicator(),
+
+          _userPosts.isEmpty
               ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(20.0),
-                child: Text("No posts yet. Add your first post!",
-                    style: TextStyle(fontSize: 16, color: Colors.grey)),
-              ))
-              : GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            shrinkWrap: true,
-            itemCount: userPosts.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 4,
-              mainAxisSpacing: 4,
-            ),
-            itemBuilder: (_, i) => GestureDetector(
-              onTap: () => _showPostDetails(userPosts[i]),
-              child: Container(
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: NetworkImage(userPosts[i]['imageUrl']),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                child: userPosts[i]['caption'] != null && userPosts[i]['caption'].isNotEmpty
-                    ? Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [Colors.black.withOpacity(0.7), Colors.transparent],
-                    ),
-                  ),
-                  child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Padding(
-                      padding: const EdgeInsets.all(4.0),
-                      child: Text(
-                        userPosts[i]['caption'],
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                )
-                    : null,
-              ),
+            child: Padding(
+              padding: EdgeInsets.all(20.0),
+              child: Text("No posts yet. Add your first post!",
+                  style: TextStyle(color: Colors.grey)),
             ),
           )
+              : ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _userPosts.length,
+            itemBuilder: (context, index) => _buildPostItem(_userPosts[index]),
+          ),
         ],
       ),
     );
   }
 
-  void _showPostDetails(Map<String, dynamic> post) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.network(
-              post['imageUrl'],
+  // ✅ Enhanced post item to handle both images and videos
+  Widget _buildPostItem(Map<String, dynamic> post) {
+    final bool isVideo = post['mediaType'] == 'video';
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Media (Image or Video)
+          Container(
+            width: double.infinity,
+            height: 300,
+            child: isVideo
+                ? _buildVideoPlayer(post['mediaUrl'])
+                : Image.network(
+              post['mediaUrl'],
               fit: BoxFit.cover,
               width: double.infinity,
+              height: 300,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: Colors.grey[300],
+                  child: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error, size: 50, color: Colors.red),
+                      SizedBox(height: 10),
+                      Text('Failed to load media'),
+                    ],
+                  ),
+                );
+              },
             ),
-            if (post['caption'] != null && post['caption'].isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(post['caption']),
-              ),
-            if (post['timestamp'] != null)
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
-                  _formatTimestamp(post['timestamp']),
-                  style: const TextStyle(color: Colors.grey),
+          ),
+
+          // Media type indicator
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0, left: 12.0),
+            child: Row(
+              children: [
+                Icon(
+                  isVideo ? Icons.videocam : Icons.photo,
+                  size: 16,
+                  color: Colors.grey,
                 ),
+                const SizedBox(width: 4),
+                Text(
+                  isVideo ? 'Video' : 'Image',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+
+          // Caption
+          if (post['caption']?.isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Text(
+                post['caption'],
+                style: const TextStyle(fontSize: 16),
               ),
-          ],
-        ),
+            ),
+
+          // Timestamp
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            child: Text(
+              DateFormat('MMM dd, yyyy - hh:mm a').format(post['timestamp']),
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ),
+        ],
       ),
-    );
-  }
-
-  String _formatTimestamp(Timestamp timestamp) {
-    final date = timestamp.toDate();
-    return DateFormat('MMM dd, yyyy - hh:mm a').format(date);
-  }
-
-  Widget _editIcon() {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-      child: const Icon(Icons.edit, color: Colors.white, size: 20),
     );
   }
 }

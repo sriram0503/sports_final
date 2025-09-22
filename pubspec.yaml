@@ -16,7 +16,7 @@ dependencies:
   another_audio_recorder: ^1.1.1
   permission_handler: ^11.3.0
   just_audio: ^0.9.36
-  path_provider: ^2.0.15
+  path: ^1.9.0
   overlay_support: ^2.1.0
   equatable: ^2.0.5
   image_picker: ^1.0.5
@@ -25,11 +25,15 @@ dependencies:
   google_maps_flutter: ^2.5.0
   geocoding: ^2.1.0
   geolocator: ^11.0.0
+  path_provider: ^2.1.2
   firebase_auth: ^5.3.1
   cloud_firestore: ^5.4.4
   firebase_core: ^3.4.0
   firebase_storage: ^12.3.1
   intl: ^0.19.0
+  video_player: ^2.8.6
+  cloudinary_public: ^0.23.1
+
 
 
 
