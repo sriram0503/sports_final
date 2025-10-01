@@ -17,6 +17,31 @@ class SignUP extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       home: const SignUpPage(),
+      // Add routes configuration
+      routes: {
+        '/home': (context) => const HomeScreen(), // You need to create this screen
+      },
+      // Fallback for unknown routes
+      onUnknownRoute: (settings) {
+        return MaterialPageRoute(builder: (context) => const SignUpPage());
+      },
+    );
+  }
+}
+
+// Temporary HomeScreen - Replace with your actual home screen
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Home'),
+      ),
+      body: const Center(
+        child: Text('Welcome to Sports Connect!'),
+      ),
     );
   }
 }
@@ -67,13 +92,14 @@ class _SignUpPageState extends State<SignUpPage> {
   // Coach-specific state variables
   List<String> _selectedAvailability = [];
   List<String> _selectedTimeSlots = [];
+  String? _selectedCoachSport;
 
   // Player-specific state variables
-  String? _selectedSport;
+  String? _selectedPlayerSport;
   String? _selectedPosition;
 
-  // Sports lists for players
-  final List<String> _playerSportsList = [
+  // Sports lists for both players and coaches
+  final List<String> _sportsList = [
     "Cricket",
     "Volleyball",
     "Basketball",
@@ -158,7 +184,7 @@ class _SignUpPageState extends State<SignUpPage> {
           age: _selectedRole == 'Player' ? int.tryParse(ageController.text.trim()) : null,
           height: _selectedRole == 'Player' ? int.tryParse(heightController.text.trim()) : null,
           weight: _selectedRole == 'Player' ? int.tryParse(weightController.text.trim()) : null,
-          sport: _selectedRole == 'Player' ? _selectedSport : null,
+          sport: _selectedRole == 'Player' ? _selectedPlayerSport : null,
           position: _selectedRole == 'Player' ? _selectedPosition : null,
           // Coach-specific data
           minFee: _selectedRole == 'Coach' ? int.tryParse(minFeeController.text.trim()) : null,
@@ -166,14 +192,18 @@ class _SignUpPageState extends State<SignUpPage> {
           availability: _selectedRole == 'Coach' ? _selectedAvailability : null,
           timeSlots: _selectedRole == 'Coach' ? _selectedTimeSlots : null,
           experience: _selectedRole == 'Coach' ? int.tryParse(experienceController.text.trim()) : null,
+          coachSport: _selectedRole == 'Coach' ? _selectedCoachSport : null,
         );
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Sign Up Successful')),
         );
 
-        // Navigate to home page after successful signup
-        Navigator.pushReplacementNamed(context, '/home');
+        // FIXED: Use pushReplacement with MaterialPageRoute instead of named route
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
       }
     } on FirebaseAuthException catch (e) {
       String errorMessage = 'An error occurred during sign up';
@@ -221,6 +251,7 @@ class _SignUpPageState extends State<SignUpPage> {
     List<String>? availability,
     List<String>? timeSlots,
     int? experience,
+    String? coachSport,
   }) async {
     try {
       Map<String, dynamic> userData = {
@@ -265,6 +296,7 @@ class _SignUpPageState extends State<SignUpPage> {
           'availability': availability,
           'time_slots': timeSlots,
           'experience': experience,
+          'sport': coachSport, // Store coach's sport
         });
       }
 
@@ -290,6 +322,30 @@ class _SignUpPageState extends State<SignUpPage> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
+
+        // Sport selection for Coach
+        DropdownButtonFormField<String>(
+          value: _selectedCoachSport,
+          decoration: _inputDecoration("Select Sport", Icons.sports),
+          items: _sportsList
+              .map((sport) => DropdownMenuItem(
+            value: sport,
+            child: Text(sport),
+          ))
+              .toList(),
+          onChanged: (value) {
+            setState(() {
+              _selectedCoachSport = value;
+            });
+          },
+          validator: (value) {
+            if (_selectedRole == 'Coach' && (value == null || value.isEmpty)) {
+              return 'Please select a sport';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 15),
 
         // Fee Range
         Row(
@@ -499,11 +555,11 @@ class _SignUpPageState extends State<SignUpPage> {
         ),
         const SizedBox(height: 15),
 
-        // Sport selection
+        // Sport selection for Player
         DropdownButtonFormField<String>(
-          value: _selectedSport,
+          value: _selectedPlayerSport,
           decoration: _inputDecoration("Select Sport", Icons.sports),
-          items: _playerSportsList
+          items: _sportsList
               .map((sport) => DropdownMenuItem(
             value: sport,
             child: Text(sport),
@@ -511,7 +567,7 @@ class _SignUpPageState extends State<SignUpPage> {
               .toList(),
           onChanged: (value) {
             setState(() {
-              _selectedSport = value;
+              _selectedPlayerSport = value;
               _selectedPosition = null; // Reset position when sport changes
             });
           },
@@ -525,11 +581,11 @@ class _SignUpPageState extends State<SignUpPage> {
         const SizedBox(height: 15),
 
         // Position selection
-        if (_selectedSport != null && _sportPositions.containsKey(_selectedSport))
+        if (_selectedPlayerSport != null && _sportPositions.containsKey(_selectedPlayerSport))
           DropdownButtonFormField<String>(
             value: _selectedPosition,
             decoration: _inputDecoration("Select Position", Icons.emoji_events),
-            items: _sportPositions[_selectedSport]!
+            items: _sportPositions[_selectedPlayerSport]!
                 .map((position) => DropdownMenuItem(
               value: position,
               child: Text(position),
@@ -704,7 +760,8 @@ class _SignUpPageState extends State<SignUpPage> {
                       onChanged: (value) {
                         setState(() {
                           _selectedRole = value;
-                          _selectedSport = null;
+                          _selectedPlayerSport = null;
+                          _selectedCoachSport = null;
                           _selectedPosition = null;
                         });
                       },

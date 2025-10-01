@@ -4,7 +4,7 @@ import 'package:sports_c/Reusable/color.dart';
 import 'package:sports_c/user/Home/home.dart';
 import 'package:sports_c/user/profile/profile_page.dart';
 import 'package:sports_c/user/search/search_screen.dart';
-import 'package:sports_c/user/chat/chat_list_screen.dart';
+import 'package:sports_c/user/chat/chat_page.dart';
 
 class DashBoardScreen extends StatefulWidget {
   final int? selectTab;
@@ -18,10 +18,9 @@ class _DashBoardScreenState extends State<DashBoardScreen> {
   int _selectedIndex = 0;
 
   final List<Widget> _pages = [
-    // const HomePage(),
-    Placeholder(),
+     const HomePage(),
     const SearchPage(),
-    const ChatListScreen(),
+     ChatListPage(),
     const ProfilePage(),
   ];
 

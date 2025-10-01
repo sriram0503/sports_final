@@ -7,6 +7,7 @@ import 'package:sports_c/Bloc/observer/observer.dart';
 import 'package:sports_c/Bloc/theme_cubit.dart';
 import 'package:sports_c/Reusable/color.dart';
 import 'package:sports_c/Splash_screen/splash_screen.dart';
+import 'package:sports_c/user/Home/home.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,8 +25,15 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => ThemeCubit(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<ThemeCubit>(
+          create: (_) => ThemeCubit(),
+        ),
+        BlocProvider<HomeBloc>(
+          create: (_) => HomeBloc(),
+        ),
+      ],
       child: const MyApp(),
     );
   }
